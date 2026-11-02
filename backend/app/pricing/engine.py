@@ -133,6 +133,7 @@ class RoundingPolicy:
 
 @dataclass(frozen=True)
 class LineCalculation:
+    product_id: uuid.UUID
     currency: str
     requested_quantity: Decimal
     requested_unit: str
@@ -315,6 +316,7 @@ def calculate_line(
             )
 
     return LineCalculation(
+        product_id=selection.product_id,
         currency=selection.currency.upper(),
         requested_quantity=quantity,
         requested_unit=requested_unit,
