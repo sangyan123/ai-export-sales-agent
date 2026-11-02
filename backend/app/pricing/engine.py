@@ -15,6 +15,7 @@ class PricingErrorCode(StrEnum):
     PRICE_MISSING = "PRICE_MISSING"
     PRICE_LIST_INACTIVE = "PRICE_LIST_INACTIVE"
     PRICE_LIST_AMBIGUOUS = "PRICE_LIST_AMBIGUOUS"
+    CUSTOMER_PRICE_AMBIGUOUS = "CUSTOMER_PRICE_AMBIGUOUS"
     PRICE_EXPIRED = "PRICE_EXPIRED"
     PRICE_NOT_YET_VALID = "PRICE_NOT_YET_VALID"
     CURRENCY_MISMATCH = "CURRENCY_MISMATCH"
@@ -32,6 +33,13 @@ class PricingWarningCode(StrEnum):
     BELOW_MOQ = "BELOW_MOQ"
 
 
+class PriceSourceKind(StrEnum):
+    PRICE_LIST = "PRICE_LIST"
+    CUSTOMER_OVERRIDE = "CUSTOMER_OVERRIDE"
+    CONTRACT = "CONTRACT"
+    MANUAL = "MANUAL"
+
+
 class PricingError(Exception):
     def __init__(self, code: PricingErrorCode, message: str) -> None:
         super().__init__(message)
@@ -47,32 +55,34 @@ class PricingWarning:
 
 @dataclass(frozen=True)
 class PriceCandidate:
-    price_tier_id: uuid.UUID
     product_id: uuid.UUID
-    price_list_id: uuid.UUID
     currency: str
     min_quantity: Decimal
     max_quantity: Decimal | None
     unit_price: Decimal
     price_basis: str
     unit: str
-    price_list_status: str
-    price_list_valid_from: date
-    price_list_valid_to: date | None
-    price_list_version: int
+    source_kind: PriceSourceKind
+    source_id: uuid.UUID
+    source_status: str
+    source_valid_from: date
+    source_valid_to: date | None
+    source_version: int | None = None
+    source_detail_id: uuid.UUID | None = None
     tier_valid_from: date | None = None
     tier_valid_to: date | None = None
 
 
 @dataclass(frozen=True)
 class PriceSource:
-    price_list_id: uuid.UUID
-    price_tier_id: uuid.UUID
-    price_list_version: int
-    price_list_valid_from: date
-    price_list_valid_to: date | None
-    tier_valid_from: date | None
-    tier_valid_to: date | None
+    kind: PriceSourceKind
+    source_id: uuid.UUID
+    valid_from: date
+    valid_to: date | None
+    version: int | None = None
+    detail_id: uuid.UUID | None = None
+    tier_valid_from: date | None = None
+    tier_valid_to: date | None = None
 
 
 @dataclass(frozen=True)
@@ -185,11 +195,11 @@ def resolve_price(
     inactive = expired = future = False
     for candidate in candidates:
         _validate_candidate(candidate)
-        if candidate.price_list_status.strip().upper() != "ACTIVE":
+        if candidate.source_status.strip().upper() != "ACTIVE":
             inactive = True
             continue
-        if not _within(as_of, candidate.price_list_valid_from, candidate.price_list_valid_to):
-            if candidate.price_list_valid_to is not None and as_of > candidate.price_list_valid_to:
+        if not _within(as_of, candidate.source_valid_from, candidate.source_valid_to):
+            if candidate.source_valid_to is not None and as_of > candidate.source_valid_to:
                 expired = True
             else:
                 future = True
@@ -247,11 +257,12 @@ def resolve_price(
         price_basis=selected.price_basis,
         price_unit=selected.unit,
         source=PriceSource(
-            price_list_id=selected.price_list_id,
-            price_tier_id=selected.price_tier_id,
-            price_list_version=selected.price_list_version,
-            price_list_valid_from=selected.price_list_valid_from,
-            price_list_valid_to=selected.price_list_valid_to,
+            kind=selected.source_kind,
+            source_id=selected.source_id,
+            valid_from=selected.source_valid_from,
+            valid_to=selected.source_valid_to,
+            version=selected.source_version,
+            detail_id=selected.source_detail_id,
             tier_valid_from=selected.tier_valid_from,
             tier_valid_to=selected.tier_valid_to,
         ),

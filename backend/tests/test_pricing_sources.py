@@ -6,21 +6,25 @@ from decimal import Decimal
 import pytest
 
 from app.pricing import (
+    CustomerOverrideSource,
     PriceCandidate,
     PriceListSource,
     PriceResolver,
+    PriceSourceKind,
     PricingError,
     PricingErrorCode,
 )
 
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-00000000000a")
+CUSTOMER_ID = uuid.UUID("00000000-0000-0000-0000-00000000000c")
 PRODUCT_ID = uuid.UUID("00000000-0000-0000-0000-00000000000b")
 AS_OF = date(2026, 11, 1)
 
 
 def make_candidate(
     *,
-    price_list_id: uuid.UUID | None = None,
+    source_kind: PriceSourceKind = PriceSourceKind.PRICE_LIST,
+    source_id: uuid.UUID | None = None,
     currency: str = "USD",
     min_quantity: str = "1",
     max_quantity: str | None = None,
@@ -30,19 +34,20 @@ def make_candidate(
     valid_to: date | None = None,
 ) -> PriceCandidate:
     return PriceCandidate(
-        price_tier_id=uuid.uuid4(),
         product_id=PRODUCT_ID,
-        price_list_id=price_list_id or uuid.uuid4(),
         currency=currency,
         min_quantity=Decimal(min_quantity),
         max_quantity=Decimal(max_quantity) if max_quantity is not None else None,
         unit_price=Decimal(unit_price),
         price_basis="PER_PIECE",
         unit="PCS",
-        price_list_status=status,
-        price_list_valid_from=valid_from,
-        price_list_valid_to=valid_to,
-        price_list_version=1,
+        source_kind=source_kind,
+        source_id=source_id or uuid.uuid4(),
+        source_status=status,
+        source_valid_from=valid_from,
+        source_valid_to=valid_to,
+        source_version=1,
+        source_detail_id=uuid.uuid4(),
     )
 
 
@@ -63,6 +68,7 @@ class FakeSource:
         self,
         *,
         tenant_id: uuid.UUID,
+        customer_id: uuid.UUID | None,
         product_id: uuid.UUID,
         currency: str,
         as_of: date,
@@ -83,13 +89,31 @@ class FakeRepository:
         return self._candidates
 
 
-async def resolve_with(providers: Sequence[FakeSource], quantity: str = "10"):
+class FakeOverrideRepository:
+    def __init__(self, candidates: Sequence[PriceCandidate]) -> None:
+        self._candidates = list(candidates)
+        self.calls = 0
+
+    async def list_customer_override_candidates(
+        self, *, tenant_id: uuid.UUID, customer_id: uuid.UUID, product_id: uuid.UUID
+    ) -> Sequence[PriceCandidate]:
+        self.calls += 1
+        return self._candidates
+
+
+async def resolve_with(
+    providers: Sequence[FakeSource],
+    quantity: str = "10",
+    customer_id: uuid.UUID | None = None,
+    currency: str = "USD",
+):
     resolver = PriceResolver(providers)
     return await resolver.resolve(
         tenant_id=TENANT_ID,
+        customer_id=customer_id,
         product_id=PRODUCT_ID,
         quantity=Decimal(quantity),
-        currency="USD",
+        currency=currency,
         as_of=AS_OF,
     )
 
@@ -176,6 +200,159 @@ def test_resolver_requires_at_least_one_source() -> None:
         PriceResolver([])
 
 
+async def test_customer_override_source_skips_lookup_without_customer() -> None:
+    repository = FakeOverrideRepository([make_candidate()])
+    source = CustomerOverrideSource(repository)
+
+    candidates = await source.candidates(
+        tenant_id=TENANT_ID,
+        customer_id=None,
+        product_id=PRODUCT_ID,
+        currency="USD",
+        as_of=AS_OF,
+    )
+
+    assert candidates == ()
+    assert repository.calls == 0
+
+
+async def test_customer_override_source_filters_by_currency() -> None:
+    repository = FakeOverrideRepository(
+        [
+            make_candidate(source_kind=PriceSourceKind.CUSTOMER_OVERRIDE, currency="USD"),
+            make_candidate(source_kind=PriceSourceKind.CUSTOMER_OVERRIDE, currency="EUR"),
+        ]
+    )
+    source = CustomerOverrideSource(repository)
+
+    candidates = await source.candidates(
+        tenant_id=TENANT_ID,
+        customer_id=CUSTOMER_ID,
+        product_id=PRODUCT_ID,
+        currency="eur",
+        as_of=AS_OF,
+    )
+
+    assert [c.currency for c in candidates] == ["EUR"]
+
+
+async def test_customer_override_source_reports_currency_mismatch() -> None:
+    source = CustomerOverrideSource(
+        FakeOverrideRepository(
+            [make_candidate(source_kind=PriceSourceKind.CUSTOMER_OVERRIDE, currency="USD")]
+        )
+    )
+
+    with pytest.raises(PricingError) as exc_info:
+        await source.candidates(
+            tenant_id=TENANT_ID,
+            customer_id=CUSTOMER_ID,
+            product_id=PRODUCT_ID,
+            currency="EUR",
+            as_of=AS_OF,
+        )
+
+    assert exc_info.value.code == PricingErrorCode.CURRENCY_MISMATCH
+
+
+async def test_customer_override_source_rejects_two_valid_overrides() -> None:
+    source = CustomerOverrideSource(
+        FakeOverrideRepository(
+            [
+                make_candidate(source_kind=PriceSourceKind.CUSTOMER_OVERRIDE),
+                make_candidate(source_kind=PriceSourceKind.CUSTOMER_OVERRIDE),
+            ]
+        )
+    )
+
+    with pytest.raises(PricingError) as exc_info:
+        await source.candidates(
+            tenant_id=TENANT_ID,
+            customer_id=CUSTOMER_ID,
+            product_id=PRODUCT_ID,
+            currency="USD",
+            as_of=AS_OF,
+        )
+
+    assert exc_info.value.code == PricingErrorCode.CUSTOMER_PRICE_AMBIGUOUS
+
+
+async def test_customer_override_source_ignores_expired_override_for_ambiguity() -> None:
+    source = CustomerOverrideSource(
+        FakeOverrideRepository(
+            [
+                make_candidate(source_kind=PriceSourceKind.CUSTOMER_OVERRIDE),
+                make_candidate(
+                    source_kind=PriceSourceKind.CUSTOMER_OVERRIDE,
+                    valid_to=date(2026, 10, 31),
+                ),
+            ]
+        )
+    )
+
+    candidates = await source.candidates(
+        tenant_id=TENANT_ID,
+        customer_id=CUSTOMER_ID,
+        product_id=PRODUCT_ID,
+        currency="USD",
+        as_of=AS_OF,
+    )
+
+    assert len(candidates) == 2
+
+
+async def test_customer_override_source_beats_price_list() -> None:
+    override_id = uuid.uuid4()
+    overrides = CustomerOverrideSource(
+        FakeOverrideRepository(
+            [
+                make_candidate(
+                    source_kind=PriceSourceKind.CUSTOMER_OVERRIDE,
+                    source_id=override_id,
+                    unit_price="1.8000",
+                )
+            ]
+        )
+    )
+    price_lists = PriceListSource(FakeRepository([make_candidate(unit_price="2.0000")]))
+    resolver = PriceResolver([overrides, price_lists])
+
+    selection = await resolver.resolve(
+        tenant_id=TENANT_ID,
+        customer_id=CUSTOMER_ID,
+        product_id=PRODUCT_ID,
+        quantity=Decimal("10"),
+        currency="USD",
+        as_of=AS_OF,
+    )
+
+    assert selection.unit_price == Decimal("1.8000")
+    assert selection.source.kind == PriceSourceKind.CUSTOMER_OVERRIDE
+    assert selection.source.source_id == override_id
+
+
+async def test_anonymous_quote_skips_customer_override_source() -> None:
+    overrides = CustomerOverrideSource(
+        FakeOverrideRepository(
+            [make_candidate(source_kind=PriceSourceKind.CUSTOMER_OVERRIDE, unit_price="1.8000")]
+        )
+    )
+    price_lists = PriceListSource(FakeRepository([make_candidate(unit_price="2.0000")]))
+    resolver = PriceResolver([overrides, price_lists])
+
+    selection = await resolver.resolve(
+        tenant_id=TENANT_ID,
+        customer_id=None,
+        product_id=PRODUCT_ID,
+        quantity=Decimal("10"),
+        currency="USD",
+        as_of=AS_OF,
+    )
+
+    assert selection.unit_price == Decimal("2.0000")
+    assert selection.source.kind == PriceSourceKind.PRICE_LIST
+
+
 async def test_price_list_source_filters_by_currency() -> None:
     repository = FakeRepository(
         [
@@ -187,6 +364,7 @@ async def test_price_list_source_filters_by_currency() -> None:
 
     candidates = await source.candidates(
         tenant_id=TENANT_ID,
+        customer_id=None,
         product_id=PRODUCT_ID,
         currency="eur",
         as_of=AS_OF,
@@ -201,6 +379,7 @@ async def test_price_list_source_reports_currency_mismatch() -> None:
     with pytest.raises(PricingError) as exc_info:
         await source.candidates(
             tenant_id=TENANT_ID,
+            customer_id=None,
             product_id=PRODUCT_ID,
             currency="EUR",
             as_of=AS_OF,
@@ -213,8 +392,8 @@ async def test_price_list_source_rejects_multiple_active_lists() -> None:
     source = PriceListSource(
         FakeRepository(
             [
-                make_candidate(price_list_id=uuid.uuid4()),
-                make_candidate(price_list_id=uuid.uuid4()),
+                make_candidate(source_id=uuid.uuid4()),
+                make_candidate(source_id=uuid.uuid4()),
             ]
         )
     )
@@ -222,6 +401,7 @@ async def test_price_list_source_rejects_multiple_active_lists() -> None:
     with pytest.raises(PricingError) as exc_info:
         await source.candidates(
             tenant_id=TENANT_ID,
+            customer_id=None,
             product_id=PRODUCT_ID,
             currency="USD",
             as_of=AS_OF,
@@ -234,14 +414,15 @@ async def test_price_list_source_ignores_expired_lists_for_ambiguity() -> None:
     source = PriceListSource(
         FakeRepository(
             [
-                make_candidate(price_list_id=uuid.uuid4()),
-                make_candidate(price_list_id=uuid.uuid4(), valid_to=date(2026, 10, 31)),
+                make_candidate(source_id=uuid.uuid4()),
+                make_candidate(source_id=uuid.uuid4(), valid_to=date(2026, 10, 31)),
             ]
         )
     )
 
     candidates = await source.candidates(
         tenant_id=TENANT_ID,
+        customer_id=None,
         product_id=PRODUCT_ID,
         currency="USD",
         as_of=AS_OF,
@@ -260,6 +441,7 @@ async def test_currency_mismatch_falls_back_to_lower_priority_source() -> None:
     resolver = PriceResolver([override, price_lists])
     selection = await resolver.resolve(
         tenant_id=TENANT_ID,
+        customer_id=CUSTOMER_ID,
         product_id=PRODUCT_ID,
         quantity=Decimal("10"),
         currency="EUR",

@@ -28,6 +28,7 @@ class PriceSourceProvider(Protocol):
         self,
         *,
         tenant_id: uuid.UUID,
+        customer_id: uuid.UUID | None,
         product_id: uuid.UUID,
         currency: str,
         as_of: date,
@@ -46,6 +47,45 @@ _FALLBACK_ERROR_CODES = frozenset(
 )
 
 
+class CustomerOverrideSource:
+    name = "customer_override"
+
+    def __init__(self, repository: PriceRepository) -> None:
+        self._repository = repository
+
+    async def candidates(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        customer_id: uuid.UUID | None,
+        product_id: uuid.UUID,
+        currency: str,
+        as_of: date,
+    ) -> Sequence[PriceCandidate]:
+        if customer_id is None:
+            return ()
+        candidates = await self._repository.list_customer_override_candidates(
+            tenant_id=tenant_id,
+            customer_id=customer_id,
+            product_id=product_id,
+        )
+        target = currency.strip().upper()
+        matching = [c for c in candidates if c.currency.upper() == target]
+        if not matching and candidates:
+            raise PricingError(
+                PricingErrorCode.CURRENCY_MISMATCH,
+                f"no customer override found in {target}",
+            )
+
+        usable = [c for c in matching if _within(as_of, c.source_valid_from, c.source_valid_to)]
+        if len(usable) > 1:
+            raise PricingError(
+                PricingErrorCode.CUSTOMER_PRICE_AMBIGUOUS,
+                "more than one approved customer override is valid",
+            )
+        return matching
+
+
 class PriceListSource:
     name = "price_list"
 
@@ -56,6 +96,7 @@ class PriceListSource:
         self,
         *,
         tenant_id: uuid.UUID,
+        customer_id: uuid.UUID | None,
         product_id: uuid.UUID,
         currency: str,
         as_of: date,
@@ -72,10 +113,10 @@ class PriceListSource:
             )
 
         active_valid_lists = {
-            c.price_list_id
+            c.source_id
             for c in matching
-            if c.price_list_status.strip().upper() == "ACTIVE"
-            and _within(as_of, c.price_list_valid_from, c.price_list_valid_to)
+            if c.source_status.strip().upper() == "ACTIVE"
+            and _within(as_of, c.source_valid_from, c.source_valid_to)
         }
         if len(active_valid_lists) > 1:
             raise PricingError(
@@ -97,6 +138,7 @@ class PriceResolver:
         self,
         *,
         tenant_id: uuid.UUID,
+        customer_id: uuid.UUID | None,
         product_id: uuid.UUID,
         quantity: Decimal,
         currency: str,
@@ -109,6 +151,7 @@ class PriceResolver:
             try:
                 candidates = await provider.candidates(
                     tenant_id=tenant_id,
+                    customer_id=customer_id,
                     product_id=product_id,
                     currency=currency,
                     as_of=as_of,
@@ -145,9 +188,18 @@ class PricingService:
         self._resolver = resolver
 
     @classmethod
-    def with_price_lists(cls, session: AsyncSession) -> "PricingService":
+    def with_default_sources(cls, session: AsyncSession) -> "PricingService":
         repository = PriceRepository(session)
-        return cls(session, repository, PriceResolver([PriceListSource(repository)]))
+        return cls(
+            session,
+            repository,
+            PriceResolver(
+                [
+                    CustomerOverrideSource(repository),
+                    PriceListSource(repository),
+                ]
+            ),
+        )
 
     async def calculate_line(
         self,
@@ -158,6 +210,7 @@ class PricingService:
         unit: str,
         currency: str,
         as_of: date,
+        customer_id: uuid.UUID | None = None,
         conversions: Sequence[UnitConversion] = (),
         policy: RoundingPolicy | None = None,
     ) -> LineCalculation:
@@ -165,6 +218,7 @@ class PricingService:
         product = await self._repository.get_product(tenant_id=tenant_id, product_id=product_id)
         selection = await self._resolver.resolve(
             tenant_id=tenant_id,
+            customer_id=customer_id,
             product_id=product_id,
             quantity=quantity,
             currency=currency,

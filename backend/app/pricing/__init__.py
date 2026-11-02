@@ -3,6 +3,7 @@ from app.pricing.engine import (
     PriceCandidate,
     PriceSelection,
     PriceSource,
+    PriceSourceKind,
     PricingError,
     PricingErrorCode,
     PricingWarning,
@@ -17,6 +18,7 @@ from app.pricing.engine import (
 )
 from app.pricing.repository import PriceRepository
 from app.pricing.service import (
+    CustomerOverrideSource,
     PriceListSource,
     PriceResolver,
     PriceSourceProvider,
@@ -24,6 +26,7 @@ from app.pricing.service import (
 )
 
 __all__ = [
+    "CustomerOverrideSource",
     "LineCalculation",
     "PriceCandidate",
     "PriceListSource",
@@ -31,6 +34,7 @@ __all__ = [
     "PriceResolver",
     "PriceSelection",
     "PriceSource",
+    "PriceSourceKind",
     "PriceSourceProvider",
     "PricingError",
     "PricingErrorCode",
