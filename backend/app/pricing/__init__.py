@@ -15,14 +15,26 @@ from app.pricing.engine import (
     quantize_money,
     resolve_price,
 )
+from app.pricing.repository import PriceRepository
+from app.pricing.service import (
+    PriceListSource,
+    PriceResolver,
+    PriceSourceProvider,
+    PricingService,
+)
 
 __all__ = [
     "LineCalculation",
     "PriceCandidate",
+    "PriceListSource",
+    "PriceRepository",
+    "PriceResolver",
     "PriceSelection",
     "PriceSource",
+    "PriceSourceProvider",
     "PricingError",
     "PricingErrorCode",
+    "PricingService",
     "PricingWarning",
     "PricingWarningCode",
     "QuoteCalculation",
