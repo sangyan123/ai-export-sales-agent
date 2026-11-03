@@ -2,8 +2,6 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.api.deps import RequestContext
 
 
@@ -15,6 +13,13 @@ def decimal_str(value: Decimal | None) -> str | None:
     return None if value is None else format(value, "f")
 
 
+def envelope_meta(request_id: str) -> dict[str, str]:
+    return {
+        "request_id": request_id,
+        "timestamp": iso_datetime(datetime.now(UTC)),
+    }
+
+
 def envelope(
     data: Any,
     context: RequestContext,
@@ -23,18 +28,7 @@ def envelope(
     page_size: int | None = None,
     total: int | None = None,
 ) -> dict[str, Any]:
-    meta: dict[str, Any] = {
-        "request_id": context.request_id,
-        "timestamp": iso_datetime(datetime.now(UTC)),
-    }
+    meta: dict[str, Any] = envelope_meta(context.request_id)
     if page is not None:
         meta.update({"page": page, "page_size": page_size, "total": total})
     return {"data": data, "meta": meta}
-
-
-async def commit_or_rollback(session: AsyncSession) -> None:
-    try:
-        await session.commit()
-    except Exception:
-        await session.rollback()
-        raise

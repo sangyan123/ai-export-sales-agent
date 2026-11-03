@@ -3,20 +3,27 @@ from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.common import commit_or_rollback, decimal_str, envelope, iso_datetime
-from app.api.deps import ContextDep, SessionDep
+from app.api.common import decimal_str, envelope, iso_datetime
+from app.api.deps import RequestContext, SessionDep, require_permission
 from app.api.enums import CatalogStatus, PriceBasis
 from app.api.errors import ApiError
+from app.core.permissions import Permission
+from app.db.session import commit_or_rollback
 from app.db.tenant import set_tenant_context
 from app.models.pricing import PriceList, PriceTier
 from app.models.product import Product
 
 router = APIRouter(tags=["price-lists"])
+
+PricingReadContext = Annotated[RequestContext, Depends(require_permission(Permission.PRICING_READ))]
+PricingUpdateContext = Annotated[
+    RequestContext, Depends(require_permission(Permission.PRICING_UPDATE))
+]
 
 
 class PriceTierCreate(BaseModel):
@@ -246,7 +253,7 @@ async def _ensure_no_tier_overlap(
 
 @router.get("/price-lists")
 async def list_price_lists(
-    context: ContextDep,
+    context: PricingReadContext,
     session: SessionDep,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -282,7 +289,7 @@ async def list_price_lists(
 @router.post("/price-lists", status_code=status.HTTP_201_CREATED)
 async def create_price_list(
     payload: PriceListCreate,
-    context: ContextDep,
+    context: PricingUpdateContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     await set_tenant_context(session, context.tenant_id)
@@ -360,7 +367,7 @@ async def create_price_list(
 @router.get("/price-lists/{price_list_id}")
 async def get_price_list(
     price_list_id: uuid.UUID,
-    context: ContextDep,
+    context: PricingReadContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     return envelope(
@@ -372,7 +379,7 @@ async def get_price_list(
 async def update_price_list(
     price_list_id: uuid.UUID,
     payload: PriceListUpdate,
-    context: ContextDep,
+    context: PricingUpdateContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     price_list = await _get_price_list(session, context.tenant_id, price_list_id)
@@ -396,7 +403,7 @@ async def update_price_list(
 async def create_price_tier(
     price_list_id: uuid.UUID,
     payload: PriceTierCreate,
-    context: ContextDep,
+    context: PricingUpdateContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     price_list = await _get_price_list(session, context.tenant_id, price_list_id)
@@ -438,7 +445,7 @@ async def create_price_tier(
 async def update_price_tier(
     tier_id: uuid.UUID,
     payload: PriceTierUpdate,
-    context: ContextDep,
+    context: PricingUpdateContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     tier = await _get_tier(session, context.tenant_id, tier_id)

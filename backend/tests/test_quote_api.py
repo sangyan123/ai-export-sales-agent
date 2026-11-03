@@ -1,4 +1,5 @@
 import os
+import uuid
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -9,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.core.security import create_access_token, hash_password
 from app.db.session import get_session
 from app.db.tenant import set_tenant_context
 from app.main import app
@@ -18,6 +20,7 @@ from app.models.quote import ApprovalTask
 from app.models.tenant import Tenant, TenantMembership, User
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+PASSWORD_HASH = hash_password("test-password")
 
 pytestmark = pytest.mark.skipif(
     not TEST_DATABASE_URL,
@@ -66,8 +69,13 @@ class ApiSeed:
     outsider_headers: dict[str, str]
 
 
-def _headers(tenant: Tenant, user: User) -> dict[str, str]:
-    return {"X-Tenant-Id": str(tenant.id), "X-User-Id": str(user.id)}
+def _bearer(tenant: Tenant, user: User, membership_id: uuid.UUID) -> dict[str, str]:
+    token = create_access_token(
+        user_id=user.id,
+        tenant_id=tenant.id,
+        membership_id=membership_id,
+    )
+    return {"Authorization": f"Bearer {token}"}
 
 
 async def seed_api(session: AsyncSession, slug: str) -> ApiSeed:
@@ -76,17 +84,25 @@ async def seed_api(session: AsyncSession, slug: str) -> ApiSeed:
     await session.flush()
     await set_tenant_context(session, tenant.id)
 
-    requester = User(email=f"rep@{slug}.example", password_hash="x", display_name="Sales Rep")
-    approver = User(email=f"approver@{slug}.example", password_hash="x", display_name="Approver")
-    outsider = User(email=f"outsider@{slug}.example", password_hash="x", display_name="Outsider")
+    requester = User(
+        email=f"rep@{slug}.example", password_hash=PASSWORD_HASH, display_name="Sales Rep"
+    )
+    approver = User(
+        email=f"approver@{slug}.example", password_hash=PASSWORD_HASH, display_name="Approver"
+    )
+    outsider = User(
+        email=f"outsider@{slug}.example", password_hash=PASSWORD_HASH, display_name="Outsider"
+    )
     session.add_all([requester, approver, outsider])
     await session.flush()
-    session.add_all(
-        [
-            TenantMembership(tenant_id=tenant.id, user_id=requester.id, role_code="SALES_REP"),
-            TenantMembership(tenant_id=tenant.id, user_id=approver.id, role_code="APPROVER"),
-        ]
+    requester_membership = TenantMembership(
+        tenant_id=tenant.id, user_id=requester.id, role_code="SALES_MANAGER"
     )
+    approver_membership = TenantMembership(
+        tenant_id=tenant.id, user_id=approver.id, role_code="APPROVER"
+    )
+    session.add_all([requester_membership, approver_membership])
+    await session.flush()
 
     product = Product(
         tenant_id=tenant.id,
@@ -133,9 +149,9 @@ async def seed_api(session: AsyncSession, slug: str) -> ApiSeed:
         outsider=outsider,
         product=product,
         unpriced_product=unpriced_product,
-        requester_headers=_headers(tenant, requester),
-        approver_headers=_headers(tenant, approver),
-        outsider_headers=_headers(tenant, outsider),
+        requester_headers=_bearer(tenant, requester, requester_membership.id),
+        approver_headers=_bearer(tenant, approver, approver_membership.id),
+        outsider_headers=_bearer(tenant, outsider, uuid.uuid4()),
     )
 
 
@@ -196,7 +212,7 @@ async def test_create_quote_returns_snapshot_and_echoes_request_id(
     assert [event["event_type"] for event in data["events"]] == ["CREATED"]
 
 
-async def test_quote_request_requires_identity_headers(client: AsyncClient) -> None:
+async def test_quote_request_requires_bearer_token(client: AsyncClient) -> None:
     response = await client.get("/api/v1/quotes")
 
     assert response.status_code == 401

@@ -2,19 +2,29 @@ import uuid
 from decimal import Decimal
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.common import commit_or_rollback, decimal_str, envelope, iso_datetime
-from app.api.deps import ContextDep, SessionDep
+from app.api.common import decimal_str, envelope, iso_datetime
+from app.api.deps import RequestContext, SessionDep, require_permission
 from app.api.enums import CatalogStatus, ProductCategory
 from app.api.errors import ApiError
+from app.core.permissions import Permission
+from app.db.session import commit_or_rollback
 from app.db.tenant import set_tenant_context
 from app.models.product import Product
 
 router = APIRouter(prefix="/products", tags=["products"])
+
+ProductReadContext = Annotated[RequestContext, Depends(require_permission(Permission.PRODUCT_READ))]
+ProductCreateContext = Annotated[
+    RequestContext, Depends(require_permission(Permission.PRODUCT_CREATE))
+]
+ProductUpdateContext = Annotated[
+    RequestContext, Depends(require_permission(Permission.PRODUCT_UPDATE))
+]
 
 
 class ProductCreate(BaseModel):
@@ -131,7 +141,7 @@ async def _ensure_code_available(
 
 @router.get("")
 async def list_products(
-    context: ContextDep,
+    context: ProductReadContext,
     session: SessionDep,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -171,7 +181,7 @@ async def list_products(
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_product(
     payload: ProductCreate,
-    context: ContextDep,
+    context: ProductCreateContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     await set_tenant_context(session, context.tenant_id)
@@ -191,7 +201,7 @@ async def create_product(
 @router.get("/{product_id}")
 async def get_product(
     product_id: uuid.UUID,
-    context: ContextDep,
+    context: ProductReadContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     product = await _get_product(session, context.tenant_id, product_id)
@@ -202,7 +212,7 @@ async def get_product(
 async def update_product(
     product_id: uuid.UUID,
     payload: ProductUpdate,
-    context: ContextDep,
+    context: ProductUpdateContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     product = await _get_product(session, context.tenant_id, product_id)

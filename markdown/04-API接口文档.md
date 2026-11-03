@@ -94,16 +94,17 @@
 | GET | `/tenants/{tenant_id}/members` | `member:read` | 成员列表；服务端验证租户归属 |
 | POST | `/tenants/{tenant_id}/members/invitations` | `member:invite` | 邀请成员 |
 
-登录请求：
+登录请求需指定目标企业（`tenant_slug` 或 `tenant_id` 二选一），服务端验证用户是否为目标企业有效成员：
 
 ```json
 {
   "email": "sales@example.com",
-  "password": "user-entered-password"
+  "password": "user-entered-password",
+  "tenant_slug": "acme-fasteners"
 }
 ```
 
-登录成功返回 `access_token`、`refresh_token`（如采用 Cookie，应使用 HttpOnly/Secure/SameSite 设置）和 `expires_in`。密码永远不返回或记录日志。
+登录成功返回 `access_token`、`refresh_token`（如采用 Cookie，应使用 HttpOnly/Secure/SameSite 设置）、`token_type`、`expires_in` 和 `refresh_expires_in`。Access Token 短时效，Refresh Token 每次刷新轮换；重复使用已轮换的 Refresh Token 会撤销该用户全部刷新令牌。密码永远不返回或记录日志。
 
 ## 5. 产品与资料接口
 

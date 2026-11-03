@@ -3,21 +3,36 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.common import commit_or_rollback, decimal_str, envelope, iso_datetime
-from app.api.deps import ContextDep, SessionDep
+from app.api.common import decimal_str, envelope, iso_datetime
+from app.api.deps import RequestContext, SessionDep, require_permission
 from app.api.enums import CatalogStatus, OverrideApprovalStatus, PriceBasis
 from app.api.errors import ApiError
+from app.core.permissions import Permission
+from app.db.session import commit_or_rollback
 from app.db.tenant import set_tenant_context
 from app.models.customer import Customer, CustomerPriceOverride
 from app.models.product import Product
 from app.models.tenant import TenantMembership
 
 router = APIRouter(tags=["customers"])
+
+CustomerReadContext = Annotated[
+    RequestContext, Depends(require_permission(Permission.CUSTOMER_READ))
+]
+CustomerCreateContext = Annotated[
+    RequestContext, Depends(require_permission(Permission.CUSTOMER_CREATE))
+]
+CustomerUpdateContext = Annotated[
+    RequestContext, Depends(require_permission(Permission.CUSTOMER_UPDATE))
+]
+PricingUpdateContext = Annotated[
+    RequestContext, Depends(require_permission(Permission.PRICING_UPDATE))
+]
 
 
 class CustomerCreate(BaseModel):
@@ -221,7 +236,7 @@ async def _ensure_unique_effective_date(
 
 @router.get("/customers")
 async def list_customers(
-    context: ContextDep,
+    context: CustomerReadContext,
     session: SessionDep,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -263,7 +278,7 @@ async def list_customers(
 @router.post("/customers", status_code=status.HTTP_201_CREATED)
 async def create_customer(
     payload: CustomerCreate,
-    context: ContextDep,
+    context: CustomerCreateContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     await set_tenant_context(session, context.tenant_id)
@@ -282,7 +297,7 @@ async def create_customer(
 @router.get("/customers/{customer_id}")
 async def get_customer(
     customer_id: uuid.UUID,
-    context: ContextDep,
+    context: CustomerReadContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     customer = await _get_customer(session, context.tenant_id, customer_id)
@@ -293,7 +308,7 @@ async def get_customer(
 async def update_customer(
     customer_id: uuid.UUID,
     payload: CustomerUpdate,
-    context: ContextDep,
+    context: CustomerUpdateContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     customer = await _get_customer(session, context.tenant_id, customer_id)
@@ -315,7 +330,7 @@ async def update_customer(
 @router.get("/customers/{customer_id}/price-overrides")
 async def list_price_overrides(
     customer_id: uuid.UUID,
-    context: ContextDep,
+    context: CustomerReadContext,
     session: SessionDep,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -354,7 +369,7 @@ async def list_price_overrides(
 async def create_price_override(
     customer_id: uuid.UUID,
     payload: PriceOverrideCreate,
-    context: ContextDep,
+    context: CustomerUpdateContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     customer = await _get_customer(session, context.tenant_id, customer_id)
@@ -392,7 +407,7 @@ async def update_price_override(
     customer_id: uuid.UUID,
     override_id: uuid.UUID,
     payload: PriceOverrideUpdate,
-    context: ContextDep,
+    context: CustomerUpdateContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     override = await _get_override(session, context.tenant_id, customer_id, override_id)
@@ -434,7 +449,7 @@ async def update_price_override(
 async def approve_price_override(
     customer_id: uuid.UUID,
     override_id: uuid.UUID,
-    context: ContextDep,
+    context: PricingUpdateContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     override = await _get_override(session, context.tenant_id, customer_id, override_id)
@@ -474,7 +489,7 @@ async def approve_price_override(
 async def reject_price_override(
     customer_id: uuid.UUID,
     override_id: uuid.UUID,
-    context: ContextDep,
+    context: PricingUpdateContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     override = await _get_override(session, context.tenant_id, customer_id, override_id)

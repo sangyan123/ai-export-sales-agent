@@ -3,19 +3,29 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.common import commit_or_rollback, decimal_str, envelope, iso_datetime
-from app.api.deps import ContextDep, RequestContext, SessionDep
+from app.api.common import decimal_str, envelope, iso_datetime
+from app.api.deps import RequestContext, SessionDep, require_permission
+from app.core.permissions import Permission
+from app.db.session import commit_or_rollback
 from app.db.tenant import set_tenant_context
 from app.models.quote import Quote, QuoteEvent, QuoteItem
 from app.pricing import PricingService, calculate_quote
 from app.quotes import QuoteError, QuoteErrorCode, QuoteService, QuoteStatus
 
 router = APIRouter(prefix="/quotes", tags=["quotes"])
+
+QuoteCreateContext = Annotated[RequestContext, Depends(require_permission(Permission.QUOTE_CREATE))]
+QuoteReadContext = Annotated[RequestContext, Depends(require_permission(Permission.QUOTE_READ))]
+QuoteSubmitContext = Annotated[RequestContext, Depends(require_permission(Permission.QUOTE_SUBMIT))]
+QuoteApproveContext = Annotated[
+    RequestContext, Depends(require_permission(Permission.QUOTE_APPROVE))
+]
+QuoteCancelContext = Annotated[RequestContext, Depends(require_permission(Permission.QUOTE_CANCEL))]
 
 
 class QuoteLineCreate(BaseModel):
@@ -163,7 +173,7 @@ def _generate_quote_no() -> str:
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_quote(
     payload: QuoteCreateRequest,
-    context: ContextDep,
+    context: QuoteCreateContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     as_of = payload.price_as_of or datetime.now(UTC).date()
@@ -199,7 +209,7 @@ async def create_quote(
 
 @router.get("")
 async def list_quotes(
-    context: ContextDep,
+    context: QuoteReadContext,
     session: SessionDep,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -232,7 +242,7 @@ async def list_quotes(
 @router.get("/{quote_id}")
 async def get_quote(
     quote_id: uuid.UUID,
-    context: ContextDep,
+    context: QuoteReadContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     return envelope(await _load_detail(session, context, quote_id), context)
@@ -241,7 +251,7 @@ async def get_quote(
 @router.post("/{quote_id}/submit-approval")
 async def submit_quote_for_approval(
     quote_id: uuid.UUID,
-    context: ContextDep,
+    context: QuoteSubmitContext,
     session: SessionDep,
 ) -> dict[str, Any]:
     await QuoteService(session).submit_for_approval(
@@ -256,7 +266,7 @@ async def submit_quote_for_approval(
 @router.post("/{quote_id}/approve")
 async def approve_quote(
     quote_id: uuid.UUID,
-    context: ContextDep,
+    context: QuoteApproveContext,
     session: SessionDep,
     payload: DecisionRequest | None = None,
 ) -> dict[str, Any]:
@@ -273,7 +283,7 @@ async def approve_quote(
 @router.post("/{quote_id}/reject")
 async def reject_quote(
     quote_id: uuid.UUID,
-    context: ContextDep,
+    context: QuoteApproveContext,
     session: SessionDep,
     payload: DecisionRequest | None = None,
 ) -> dict[str, Any]:
@@ -290,7 +300,7 @@ async def reject_quote(
 @router.post("/{quote_id}/cancel")
 async def cancel_quote(
     quote_id: uuid.UUID,
-    context: ContextDep,
+    context: QuoteCancelContext,
     session: SessionDep,
     payload: CancelQuoteRequest | None = None,
 ) -> dict[str, Any]:

@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
     log_level: str = "INFO"
 
+    jwt_secret_key: str | None = None
+    jwt_issuer: str = "fastener-ai"
+    jwt_audience: str = "fastener-ai-api"
+    access_token_ttl_seconds: int = 900
+    refresh_token_ttl_seconds: int = 1_209_600
+
     database_url: str = "postgresql+asyncpg://fastener:fastener@localhost:5433/fastener_ai"
     migration_database_url: str = (
         "postgresql+psycopg://fastener:fastener@localhost:5433/fastener_ai"

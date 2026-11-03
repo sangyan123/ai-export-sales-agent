@@ -6,12 +6,14 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.core.security import create_access_token, hash_password
 from app.db.session import get_session
 from app.db.tenant import set_tenant_context
 from app.main import app
 from app.models.tenant import Tenant, TenantMembership, User
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+PASSWORD_HASH = hash_password("test-password")
 
 pytestmark = pytest.mark.skipif(
     not TEST_DATABASE_URL,
@@ -54,21 +56,29 @@ class Account:
     headers: dict[str, str]
 
 
-async def seed_account(session: AsyncSession, slug: str) -> Account:
+async def seed_account(
+    session: AsyncSession, slug: str, role_code: str = "SALES_MANAGER"
+) -> Account:
     tenant = Tenant(name=slug, slug=slug)
     session.add(tenant)
     await session.flush()
     await set_tenant_context(session, tenant.id)
 
-    user = User(email=f"user@{slug}.example", password_hash="x", display_name="Sales Rep")
+    user = User(email=f"user@{slug}.example", password_hash=PASSWORD_HASH, display_name="Sales Rep")
     session.add(user)
     await session.flush()
-    session.add(TenantMembership(tenant_id=tenant.id, user_id=user.id, role_code="SALES_REP"))
+    membership = TenantMembership(tenant_id=tenant.id, user_id=user.id, role_code=role_code)
+    session.add(membership)
     await session.flush()
+    token = create_access_token(
+        user_id=user.id,
+        tenant_id=tenant.id,
+        membership_id=membership.id,
+    )
     return Account(
         tenant=tenant,
         user=user,
-        headers={"X-Tenant-Id": str(tenant.id), "X-User-Id": str(user.id)},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
 
