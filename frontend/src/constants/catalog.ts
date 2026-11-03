@@ -1,6 +1,11 @@
 import type { CustomerStatus, OverrideApprovalStatus } from '@/types/customer'
 import type { FollowupStatus } from '@/api/followups'
-import type { InquiryStatus } from '@/api/inquiries'
+import type {
+  InquirySourceType,
+  InquiryStatus,
+  MatchStatus,
+  ScanStatus,
+} from '@/types/inquiry'
 import type { CatalogStatus, PriceBasis, ProductCategory } from '@/types/product'
 
 export type TagType = 'primary' | 'success' | 'info' | 'warning' | 'danger'
@@ -122,4 +127,78 @@ export const FOLLOWUP_STATUS_TAG: Record<FollowupStatus, TagType> = {
   PENDING: 'warning',
   DONE: 'success',
   CANCELLED: 'info',
+}
+
+export const INQUIRY_STATUS_OPTIONS = Object.entries(INQUIRY_STATUS_LABELS).map(
+  ([value, label]) => ({ value: value as InquiryStatus, label }),
+)
+
+export const INQUIRY_SOURCE_LABELS: Record<InquirySourceType, string> = {
+  MANUAL: '手工录入',
+  EMAIL: '邮件',
+  UPLOAD: '上传',
+  OTHER: '其他',
+}
+
+export const INQUIRY_SOURCE_OPTIONS = Object.entries(INQUIRY_SOURCE_LABELS).map(
+  ([value, label]) => ({ value: value as InquirySourceType, label }),
+)
+
+export const INQUIRY_STATUS_TRANSITIONS: Record<InquiryStatus, InquiryStatus[]> = {
+  RECEIVED: ['PARSING', 'NEEDS_INFO', 'READY_FOR_MATCH', 'QUOTE_DRAFTED', 'ARCHIVED'],
+  PARSING: ['NEEDS_INFO', 'READY_FOR_MATCH'],
+  NEEDS_INFO: ['RECEIVED', 'PARSING', 'READY_FOR_MATCH', 'ARCHIVED'],
+  READY_FOR_MATCH: ['MATCHED', 'QUOTE_DRAFTED', 'NEEDS_INFO'],
+  MATCHED: ['QUOTE_DRAFTED', 'NEEDS_INFO'],
+  QUOTE_DRAFTED: ['PENDING_APPROVAL', 'MATCHED'],
+  PENDING_APPROVAL: ['QUOTE_APPROVED', 'QUOTE_DRAFTED'],
+  QUOTE_APPROVED: ['REPLIED', 'LOST'],
+  REPLIED: ['WON', 'LOST', 'QUOTE_DRAFTED'],
+  WON: ['ARCHIVED'],
+  LOST: ['ARCHIVED'],
+  ARCHIVED: [],
+}
+
+export const INQUIRY_FIELD_LABELS: Record<string, string> = {
+  product_category: '产品品类',
+  standard_code: '标准号',
+  material: '材质',
+  grade: '等级',
+  diameter: '直径',
+  length: '长度',
+  thread_pitch: '螺距',
+  surface_finish: '表面处理',
+  quantity: '数量',
+  unit: '单位',
+  destination_country: '目的国',
+  incoterm: '贸易条款',
+  packaging: '包装要求',
+}
+
+export const MATCH_STATUS_LABELS: Record<MatchStatus, string> = {
+  EXACT: '完全匹配',
+  POSSIBLE: '可能匹配',
+  CONFLICT: '存在冲突',
+  NO_MATCH: '匹配度低',
+}
+
+export const MATCH_STATUS_TAG: Record<MatchStatus, TagType> = {
+  EXACT: 'success',
+  POSSIBLE: 'primary',
+  CONFLICT: 'warning',
+  NO_MATCH: 'info',
+}
+
+export const SCAN_STATUS_LABELS: Record<ScanStatus, string> = {
+  PENDING: '待扫描',
+  CLEAN: '已扫描',
+  INFECTED: '有风险',
+  FAILED: '扫描失败',
+}
+
+export const SCAN_STATUS_TAG: Record<ScanStatus, TagType> = {
+  PENDING: 'info',
+  CLEAN: 'success',
+  INFECTED: 'danger',
+  FAILED: 'warning',
 }

@@ -26,3 +26,27 @@ export function formatAmount(value: string | null | undefined, currency?: string
   }
   return currency ? `${currency} ${value}` : value
 }
+
+export function formatPercent(value: number | string | null | undefined): string {
+  if (value === null || value === undefined || value === '') {
+    return '—'
+  }
+  const numeric = typeof value === 'string' ? Number(value) : value
+  if (Number.isNaN(numeric)) {
+    return '—'
+  }
+  return `${Math.round(numeric * 100)}%`
+}
+
+export function formatBytes(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return '—'
+  }
+  if (value < 1024) {
+    return `${value} B`
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`
+  }
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}

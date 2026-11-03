@@ -35,6 +35,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '询盘管理', permission: 'inquiry:read' },
       },
       {
+        path: 'inquiries/:id',
+        name: 'inquiry-detail',
+        component: () => import('@/views/inquiries/InquiryDetailView.vue'),
+        meta: { title: '询盘详情', permission: 'inquiry:read', activeMenu: '/inquiries' },
+      },
+      {
         path: 'quotes',
         name: 'quotes',
         component: () => import('@/views/quotes/QuoteListView.vue'),

@@ -1,40 +1,81 @@
-import { getEnvelope } from './http'
+import { getData, getEnvelope } from './http'
 
-export type InquiryStatus =
-  | 'RECEIVED'
-  | 'PARSING'
-  | 'NEEDS_INFO'
-  | 'READY_FOR_MATCH'
-  | 'MATCHED'
-  | 'QUOTE_DRAFTED'
-  | 'PENDING_APPROVAL'
-  | 'QUOTE_APPROVED'
-  | 'REPLIED'
-  | 'WON'
-  | 'LOST'
-  | 'ARCHIVED'
+import type {
+  AnalysisRequestResult,
+  InquiryAttachment,
+  InquiryCreatePayload,
+  InquiryDetail,
+  InquiryListParams,
+  InquiryMatches,
+  InquiryRequirement,
+  InquirySummary,
+  InquiryUpdatePayload,
+  RequirementUpdatePayload,
+} from '@/types/inquiry'
 
-export interface InquirySummary {
-  id: string
-  customer_id: string
-  subject: string
-  source_type: 'MANUAL' | 'EMAIL' | 'UPLOAD' | 'OTHER'
-  status: InquiryStatus
-  owner_user_id: string | null
-  received_at: string
-  created_at: string
-  updated_at: string
-}
-
-export interface InquiryListParams {
-  page?: number
-  page_size?: number
-  status?: InquiryStatus
-  customer_id?: string
-  owner_user_id?: string
-  q?: string
-}
+export type {
+  AnalysisRequestResult,
+  InquiryAttachment,
+  InquiryCreatePayload,
+  InquiryDetail,
+  InquiryListParams,
+  InquiryMatch,
+  InquiryMatches,
+  InquiryRequirement,
+  InquirySourceType,
+  InquiryStatus,
+  InquirySummary,
+  InquiryUpdatePayload,
+  MatchStatus,
+  ParsedField,
+  RequirementUpdatePayload,
+  ScanStatus,
+} from '@/types/inquiry'
 
 export function fetchInquiries(params: InquiryListParams = {}) {
   return getEnvelope<InquirySummary[]>('/inquiries', { params })
+}
+
+export function fetchInquiry(inquiryId: string) {
+  return getData<InquiryDetail>(`/inquiries/${inquiryId}`)
+}
+
+export function createInquiry(payload: InquiryCreatePayload) {
+  return getData<InquiryDetail>('/inquiries', { method: 'post', data: payload })
+}
+
+export function updateInquiry(inquiryId: string, payload: InquiryUpdatePayload) {
+  return getData<InquiryDetail>(`/inquiries/${inquiryId}`, { method: 'patch', data: payload })
+}
+
+export function uploadInquiryAttachment(inquiryId: string, file: File) {
+  const data = new FormData()
+  data.append('file', file)
+  return getData<InquiryAttachment>(`/inquiries/${inquiryId}/attachments`, {
+    method: 'post',
+    data,
+  })
+}
+
+export function requestInquiryAnalysis(inquiryId: string) {
+  return getData<AnalysisRequestResult>(`/inquiries/${inquiryId}/analysis`, { method: 'post' })
+}
+
+export function fetchInquiryRequirements(inquiryId: string) {
+  return getData<InquiryRequirement | null>(`/inquiries/${inquiryId}/requirements`)
+}
+
+export function saveInquiryRequirements(inquiryId: string, payload: RequirementUpdatePayload) {
+  return getData<InquiryRequirement>(`/inquiries/${inquiryId}/requirements`, {
+    method: 'patch',
+    data: payload,
+  })
+}
+
+export function fetchInquiryMatches(inquiryId: string) {
+  return getData<InquiryMatches>(`/inquiries/${inquiryId}/matches`)
+}
+
+export function generateInquiryMatches(inquiryId: string) {
+  return getData<InquiryMatches>(`/inquiries/${inquiryId}/matches`, { method: 'post' })
 }
