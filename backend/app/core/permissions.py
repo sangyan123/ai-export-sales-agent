@@ -23,7 +23,9 @@ class Permission(StrEnum):
     QUOTE_SUBMIT = "quote:submit"
     QUOTE_APPROVE = "quote:approve"
     QUOTE_CANCEL = "quote:cancel"
+    EMAIL_READ = "email:read"
     EMAIL_DRAFT = "email:draft"
+    EMAIL_UPDATE = "email:update"
     EMAIL_APPROVE = "email:approve"
     EMAIL_SEND = "email:send"
     CUSTOMER_READ = "customer:read"
@@ -44,6 +46,7 @@ _READ_ONLY = frozenset(
         Permission.INQUIRY_READ,
         Permission.QUOTE_READ,
         Permission.CUSTOMER_READ,
+        Permission.EMAIL_READ,
         Permission.WORKFLOW_READ,
     }
 )
@@ -58,6 +61,7 @@ _SALES_REP = _READ_ONLY | frozenset(
         Permission.QUOTE_SUBMIT,
         Permission.QUOTE_CANCEL,
         Permission.EMAIL_DRAFT,
+        Permission.EMAIL_UPDATE,
         Permission.CUSTOMER_CREATE,
         Permission.CUSTOMER_UPDATE,
         Permission.FOLLOWUP_MANAGE,

@@ -416,6 +416,34 @@ curl -X POST "$API/api/v1/quotes/{quote_id}/documents?format=PDF" \
 
 MVP 的邮件可只生成草案、复制文本或下载文件；`send` 接口可以暂不开放，避免出现未完成邮件供应商和审批机制就对外承诺可发送。
 
+`POST /inquiries/{inquiry_id}/email-drafts` 仅基于已批准报价生成草案，请求可携带 `quote_id` 与 `language`（默认 `en`）；省略 `quote_id` 时使用该询盘最新一版已批准报价。显式指定的报价不存在或不属于该询盘返回 `404 EMAIL_QUOTE_NOT_FOUND`，没有已批准报价返回 `409 EMAIL_QUOTE_NOT_APPROVED`。生成输入仅包含最新解析/人工确认需求、报价行产品快照与报价快照；缺失的贸易条款、有效期或规格以 `To be confirmed` 标记并写入 `missing_information`，不得编造价格、折扣、交期或认证。确定性生成器当前仅支持英文，其他语言返回 `400 EMAIL_UNSUPPORTED_LANGUAGE`；模型供应商异常返回 `502`。生成成功返回 `201` 与 `DRAFT` 状态的草案，并记录 `email.draft.create` 审计事件。
+
+邮件草案响应：
+
+```json
+{
+  "data": {
+    "id": "9c2e...",
+    "inquiry_id": "71a1...",
+    "quote_id": "a8c2...",
+    "subject": "Re: RFQ - stainless steel bolts",
+    "body": "Dear Fastener Buyer GmbH Purchasing Team,\n\nThank you for your inquiry...",
+    "language": "en",
+    "status": "DRAFT",
+    "approved_by": null,
+    "approved_at": null,
+    "model_id": "deterministic-email-generator.v1",
+    "claims_used": ["quote:Q-1001:v2", "product:BOLT-EXT", "requirement:material"],
+    "missing_information": ["Incoterm", "Lead time"],
+    "review_flags": ["MISSING_INFORMATION"],
+    "created_at": "2026-11-03T09:00:00Z",
+    "updated_at": "2026-11-03T09:00:00Z"
+  }
+}
+```
+
+`PATCH /email-drafts/{draft_id}` 仅允许编辑 `DRAFT` 状态，可更新 `subject`、`body`，至少提供一项，已批准草案返回 `409 EMAIL_DRAFT_NOT_EDITABLE`。`POST /email-drafts/{draft_id}/approve` 仅允许 `DRAFT` 状态且报价仍为 `APPROVED`，否则分别返回 `409 EMAIL_DRAFT_NOT_APPROVABLE`、`409 EMAIL_QUOTE_NOT_APPROVED`；审批成功后状态变为 `APPROVED` 并记录 `approved_by`、`approved_at`。MVP 不提供真实发送接口。
+
 ## 9. 工作流与系统接口
 
 | 方法 | 路径 | 权限 | 说明 |
@@ -456,6 +484,7 @@ MVP 的邮件可只生成草案、复制文本或下载文件；`send` 接口可
 |---|---|
 | `QUOTE` | `quote.create`、`quote.create_version`、`quote.submit`、`quote.approve`、`quote.reject`、`quote.recalculate`、`quote.revise`、`quote.send`、`quote.expire`、`quote.cancel` |
 | `INQUIRY` | `inquiry.create`、`inquiry.update`、`inquiry.attachment.upload`、`inquiry.analysis.request`、`inquiry.analysis.completed`、`inquiry.analysis.failed`、`inquiry.matches.generate` |
+| `EMAIL_DRAFT` | `email.draft.create`、`email.draft.update`、`email.draft.approve` |
 | `WORKFLOW_RUN` | `workflow.cancel` |
 
 ## 10. OpenAPI 规范要求

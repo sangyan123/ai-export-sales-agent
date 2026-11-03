@@ -1,6 +1,7 @@
 from app.models.audit import AuditLog
 from app.models.auth import AuthRefreshToken
 from app.models.customer import Customer, CustomerPriceOverride
+from app.models.email import EmailDraft
 from app.models.inquiry import Inquiry, InquiryAttachment, InquiryMessage, InquiryRequirement
 from app.models.matching import ProductMatch
 from app.models.pricing import PriceList, PriceTier
@@ -15,6 +16,7 @@ __all__ = [
     "AuthRefreshToken",
     "Customer",
     "CustomerPriceOverride",
+    "EmailDraft",
     "Inquiry",
     "InquiryAttachment",
     "InquiryMessage",
