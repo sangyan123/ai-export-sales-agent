@@ -1,3 +1,4 @@
+import hashlib
 import os
 import uuid
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.core.config import settings
 from app.core.security import create_access_token, hash_password
 from app.db.session import get_session
 from app.db.tenant import set_tenant_context
@@ -18,6 +20,7 @@ from app.models.inquiry import Inquiry
 from app.models.pricing import PriceList, PriceTier
 from app.models.product import Product
 from app.models.tenant import Tenant, TenantMembership, User
+from app.storage import StorageError, get_storage
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 PASSWORD_HASH = hash_password("test-password")
@@ -42,18 +45,44 @@ async def session() -> AsyncSession:
         await engine.dispose()
 
 
+class MemoryStorage:
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+
+    async def put(self, *, object_key: str, data: bytes, content_type: str) -> None:
+        self.objects[object_key] = data
+
+    async def delete(self, *, object_key: str) -> None:
+        self.objects.pop(object_key, None)
+
+
+class FailingStorage:
+    async def put(self, *, object_key: str, data: bytes, content_type: str) -> None:
+        raise StorageError("storage unavailable")
+
+    async def delete(self, *, object_key: str) -> None:
+        return None
+
+
 @pytest.fixture
-async def client(session: AsyncSession) -> AsyncClient:
+def storage() -> MemoryStorage:
+    return MemoryStorage()
+
+
+@pytest.fixture
+async def client(session: AsyncSession, storage: MemoryStorage) -> AsyncClient:
     async def override_get_session():
         yield session
 
     app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_storage] = lambda: storage
     transport = ASGITransport(app=app)
     try:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client
     finally:
         app.dependency_overrides.pop(get_session, None)
+        app.dependency_overrides.pop(get_storage, None)
 
 
 @dataclass(frozen=True)
@@ -61,6 +90,7 @@ class InquirySeed:
     tenant: Tenant
     rep: User
     viewer: User
+    approver: User
     customer: Customer
     other_tenant: Tenant
     other_customer: Customer
@@ -68,6 +98,7 @@ class InquirySeed:
     product: Product
     rep_headers: dict[str, str]
     viewer_headers: dict[str, str]
+    approver_headers: dict[str, str]
 
 
 def _bearer(tenant: Tenant, user: User, membership_id: uuid.UUID) -> dict[str, str]:
@@ -89,13 +120,19 @@ async def seed_inquiries(session: AsyncSession, slug: str) -> InquirySeed:
     viewer = User(
         email=f"viewer@{slug}.example", password_hash=PASSWORD_HASH, display_name="Viewer"
     )
-    session.add_all([rep, viewer])
+    approver = User(
+        email=f"approver@{slug}.example", password_hash=PASSWORD_HASH, display_name="Approver"
+    )
+    session.add_all([rep, viewer, approver])
     await session.flush()
 
     await set_tenant_context(session, tenant.id)
     rep_membership = TenantMembership(tenant_id=tenant.id, user_id=rep.id, role_code="SALES_REP")
     viewer_membership = TenantMembership(tenant_id=tenant.id, user_id=viewer.id, role_code="VIEWER")
-    session.add_all([rep_membership, viewer_membership])
+    approver_membership = TenantMembership(
+        tenant_id=tenant.id, user_id=approver.id, role_code="APPROVER"
+    )
+    session.add_all([rep_membership, viewer_membership, approver_membership])
     await session.flush()
 
     customer = Customer(tenant_id=tenant.id, company_name="Fastener Buyer GmbH")
@@ -149,6 +186,7 @@ async def seed_inquiries(session: AsyncSession, slug: str) -> InquirySeed:
         tenant=tenant,
         rep=rep,
         viewer=viewer,
+        approver=approver,
         customer=customer,
         other_tenant=other_tenant,
         other_customer=other_customer,
@@ -156,6 +194,7 @@ async def seed_inquiries(session: AsyncSession, slug: str) -> InquirySeed:
         product=product,
         rep_headers=_bearer(tenant, rep, rep_membership.id),
         viewer_headers=_bearer(tenant, viewer, viewer_membership.id),
+        approver_headers=_bearer(tenant, approver, approver_membership.id),
     )
 
 
@@ -182,6 +221,40 @@ async def create_inquiry(
     )
     assert response.status_code == 201, response.text
     return response.json()["data"]
+
+
+def quote_payload(seed: InquirySeed, **overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "currency": "USD",
+        "items": [
+            {
+                "product_id": str(seed.product.id),
+                "quantity": "1000",
+                "unit": "PCS",
+            }
+        ],
+        "valid_until": "2026-12-31",
+    }
+    payload.update(overrides)
+    return payload
+
+
+async def create_linked_quote(
+    client: AsyncClient, seed: InquirySeed, inquiry_id: str
+) -> dict[str, Any]:
+    response = await client.post(
+        "/api/v1/quotes",
+        json=quote_payload(seed, inquiry_id=inquiry_id),
+        headers=seed.rep_headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["data"]
+
+
+async def get_inquiry_status(client: AsyncClient, seed: InquirySeed, inquiry_id: str) -> str:
+    response = await client.get(f"/api/v1/inquiries/{inquiry_id}", headers=seed.rep_headers)
+    assert response.status_code == 200, response.text
+    return response.json()["data"]["status"]
 
 
 async def test_create_inquiry_defaults_owner_and_status(
@@ -418,44 +491,80 @@ async def test_quote_persists_inquiry_link(client: AsyncClient, session: AsyncSe
     seed = await seed_inquiries(session, "inq-quote")
     created = await create_inquiry(client, seed)
 
+    quote = await create_linked_quote(client, seed, created["id"])
+
+    assert quote["inquiry_id"] == created["id"]
+    assert await get_inquiry_status(client, seed, created["id"]) == "QUOTE_DRAFTED"
+
+
+async def test_quote_lifecycle_advances_inquiry_status(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_inquiries(session, "inq-quote-lifecycle")
+    created = await create_inquiry(client, seed)
+    quote = await create_linked_quote(client, seed, created["id"])
+
+    submitted = await client.post(
+        f"/api/v1/quotes/{quote['id']}/submit-approval",
+        headers=seed.rep_headers,
+    )
+    assert submitted.status_code == 200, submitted.text
+    assert await get_inquiry_status(client, seed, created["id"]) == "PENDING_APPROVAL"
+
+    approved = await client.post(
+        f"/api/v1/quotes/{quote['id']}/approve",
+        json={"decision_note": "approved"},
+        headers=seed.approver_headers,
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["data"]["status"] == "APPROVED"
+    assert await get_inquiry_status(client, seed, created["id"]) == "QUOTE_APPROVED"
+
+
+async def test_quote_rejection_returns_inquiry_to_draft(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_inquiries(session, "inq-quote-reject")
+    created = await create_inquiry(client, seed)
+    quote = await create_linked_quote(client, seed, created["id"])
+    await client.post(
+        f"/api/v1/quotes/{quote['id']}/submit-approval",
+        headers=seed.rep_headers,
+    )
+
+    rejected = await client.post(
+        f"/api/v1/quotes/{quote['id']}/reject",
+        json={"decision_note": "price too low"},
+        headers=seed.approver_headers,
+    )
+    assert rejected.status_code == 200, rejected.text
+    assert await get_inquiry_status(client, seed, created["id"]) == "QUOTE_DRAFTED"
+
+
+async def test_quote_without_inquiry_does_not_change_inquiries(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_inquiries(session, "inq-quote-none")
+    created = await create_inquiry(client, seed)
+
     response = await client.post(
         "/api/v1/quotes",
-        json={
-            "inquiry_id": created["id"],
-            "currency": "USD",
-            "items": [
-                {
-                    "product_id": str(seed.product.id),
-                    "quantity": "1000",
-                    "unit": "PCS",
-                }
-            ],
-            "valid_until": "2026-12-31",
-        },
+        json=quote_payload(seed),
         headers=seed.rep_headers,
     )
     assert response.status_code == 201, response.text
-    assert response.json()["data"]["inquiry_id"] == created["id"]
+    assert response.json()["data"]["inquiry_id"] is None
+    assert await get_inquiry_status(client, seed, created["id"]) == "RECEIVED"
 
 
 async def test_quote_rejects_unknown_or_foreign_inquiry(
     client: AsyncClient, session: AsyncSession
 ) -> None:
     seed = await seed_inquiries(session, "inq-quote-404")
-    payload = {
-        "currency": "USD",
-        "items": [
-            {
-                "product_id": str(seed.product.id),
-                "quantity": "1000",
-                "unit": "PCS",
-            }
-        ],
-    }
 
     unknown = await client.post(
         "/api/v1/quotes",
-        json={**payload, "inquiry_id": str(uuid.uuid4())},
+        json=quote_payload(seed, inquiry_id=str(uuid.uuid4())),
         headers=seed.rep_headers,
     )
     assert unknown.status_code == 404
@@ -463,8 +572,130 @@ async def test_quote_rejects_unknown_or_foreign_inquiry(
 
     foreign = await client.post(
         "/api/v1/quotes",
-        json={**payload, "inquiry_id": str(seed.other_inquiry.id)},
+        json=quote_payload(seed, inquiry_id=str(seed.other_inquiry.id)),
         headers=seed.rep_headers,
     )
     assert foreign.status_code == 404
     assert foreign.json()["error"]["code"] == "INQUIRY_NOT_FOUND"
+
+
+async def test_upload_attachment_and_list_in_detail(
+    client: AsyncClient, session: AsyncSession, storage: MemoryStorage
+) -> None:
+    seed = await seed_inquiries(session, "inq-attach")
+    created = await create_inquiry(client, seed)
+    content = b"%PDF-1.4\nRFQ attachment"
+
+    response = await client.post(
+        f"/api/v1/inquiries/{created['id']}/attachments",
+        files={"file": ("../../RFQ 2026.pdf", content, "application/pdf")},
+        headers=seed.rep_headers,
+    )
+
+    assert response.status_code == 201, response.text
+    data = response.json()["data"]
+    assert data["filename"] == "RFQ 2026.pdf"
+    assert data["content_type"] == "application/pdf"
+    assert data["size_bytes"] == len(content)
+    assert data["checksum"] == hashlib.sha256(content).hexdigest()
+    assert data["scan_status"] == "PENDING"
+    assert len(storage.objects) == 1
+    object_key, stored = next(iter(storage.objects.items()))
+    assert stored == content
+    assert object_key.startswith(f"tenants/{seed.tenant.id}/inquiries/{created['id']}/")
+    assert object_key.endswith(".pdf")
+
+    detail = await client.get(f"/api/v1/inquiries/{created['id']}", headers=seed.rep_headers)
+    assert detail.status_code == 200
+    attachments = detail.json()["data"]["attachments"]
+    assert len(attachments) == 1
+    assert attachments[0]["id"] == data["id"]
+    assert attachments[0]["filename"] == "RFQ 2026.pdf"
+
+
+async def test_upload_attachment_rejects_empty_file(
+    client: AsyncClient, session: AsyncSession, storage: MemoryStorage
+) -> None:
+    seed = await seed_inquiries(session, "inq-attach-empty")
+    created = await create_inquiry(client, seed)
+
+    response = await client.post(
+        f"/api/v1/inquiries/{created['id']}/attachments",
+        files={"file": ("empty.txt", b"", "text/plain")},
+        headers=seed.rep_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "ATTACHMENT_EMPTY"
+    assert storage.objects == {}
+
+
+async def test_upload_attachment_rejects_oversized_file(
+    client: AsyncClient,
+    session: AsyncSession,
+    storage: MemoryStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed = await seed_inquiries(session, "inq-attach-large")
+    created = await create_inquiry(client, seed)
+    monkeypatch.setattr(settings, "attachment_max_bytes", 8)
+
+    response = await client.post(
+        f"/api/v1/inquiries/{created['id']}/attachments",
+        files={"file": ("large.bin", b"123456789", "application/octet-stream")},
+        headers=seed.rep_headers,
+    )
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "ATTACHMENT_TOO_LARGE"
+    assert storage.objects == {}
+
+
+async def test_upload_attachment_requires_update_permission(
+    client: AsyncClient, session: AsyncSession, storage: MemoryStorage
+) -> None:
+    seed = await seed_inquiries(session, "inq-attach-rbac")
+    created = await create_inquiry(client, seed)
+
+    response = await client.post(
+        f"/api/v1/inquiries/{created['id']}/attachments",
+        files={"file": ("rfq.pdf", b"content", "application/pdf")},
+        headers=seed.viewer_headers,
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "PERMISSION_DENIED"
+    assert storage.objects == {}
+
+
+async def test_upload_attachment_rejects_cross_tenant_inquiry(
+    client: AsyncClient, session: AsyncSession, storage: MemoryStorage
+) -> None:
+    seed = await seed_inquiries(session, "inq-attach-isolation")
+
+    response = await client.post(
+        f"/api/v1/inquiries/{seed.other_inquiry.id}/attachments",
+        files={"file": ("rfq.pdf", b"content", "application/pdf")},
+        headers=seed.rep_headers,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "INQUIRY_NOT_FOUND"
+    assert storage.objects == {}
+
+
+async def test_upload_attachment_maps_storage_failure(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_inquiries(session, "inq-attach-storage")
+    created = await create_inquiry(client, seed)
+    app.dependency_overrides[get_storage] = FailingStorage
+
+    response = await client.post(
+        f"/api/v1/inquiries/{created['id']}/attachments",
+        files={"file": ("rfq.pdf", b"content", "application/pdf")},
+        headers=seed.rep_headers,
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "STORAGE_UNAVAILABLE"

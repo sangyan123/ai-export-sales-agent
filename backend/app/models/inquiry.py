@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -111,6 +112,38 @@ class InquiryRequirement(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base)
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     model_id: Mapped[str | None] = mapped_column(String(120))
+
+
+class InquiryAttachment(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
+    __tablename__ = "inquiry_attachments"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_inquiry_attachments_tenant_id_id"),
+        UniqueConstraint("tenant_id", "object_key", name="uq_inquiry_attachments_tenant_object"),
+        ForeignKeyConstraint(
+            ["tenant_id", "inquiry_id"],
+            ["inquiries.tenant_id", "inquiries.id"],
+            name="fk_inquiry_attachments_tenant_inquiry",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("size_bytes >= 0", name="size_bytes_non_negative"),
+        CheckConstraint(
+            "scan_status IN ('PENDING', 'CLEAN', 'INFECTED', 'FAILED')",
+            name="scan_status",
+        ),
+        Index(
+            "ix_inquiry_attachments_tenant_inquiry",
+            "tenant_id",
+            "inquiry_id",
+        ),
+    )
+
+    inquiry_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    scan_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="PENDING")
 
 
 class InquiryMessage(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):

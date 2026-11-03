@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.tenant import set_tenant_context
+from app.inquiries import InquiryStatus, can_transition
 from app.models.inquiry import Inquiry
 from app.models.product import Product
 from app.models.quote import ApprovalTask, Quote, QuoteEvent, QuoteItem
@@ -113,8 +114,9 @@ class QuoteService:
             tenant_id=tenant_id,
             product_ids={line.product_id for line in calculation.lines},
         )
-        if inquiry_id is not None:
-            await self._require_inquiry(tenant_id, inquiry_id)
+        inquiry = (
+            await self._load_inquiry(tenant_id, inquiry_id) if inquiry_id is not None else None
+        )
 
         quote = Quote(
             tenant_id=tenant_id,
@@ -165,6 +167,8 @@ class QuoteService:
                 "grand_total": str(calculation.grand_total),
             },
         )
+        if inquiry is not None:
+            self._apply_inquiry_status(inquiry, InquiryStatus.QUOTE_DRAFTED)
         await self._session.flush()
         return quote
 
@@ -194,6 +198,7 @@ class QuoteService:
             actor_id=actor_id,
             payload={"approval_task_id": str(task.id)},
         )
+        await self._advance_inquiry(tenant_id, quote.inquiry_id, InquiryStatus.PENDING_APPROVAL)
         await self._session.flush()
         return task
 
@@ -227,6 +232,7 @@ class QuoteService:
             actor_id=approver_id,
             payload={"approval_task_id": str(task.id), "note": note},
         )
+        await self._advance_inquiry(tenant_id, quote.inquiry_id, InquiryStatus.QUOTE_APPROVED)
         await self._session.flush()
         return quote
 
@@ -260,6 +266,7 @@ class QuoteService:
             actor_id=approver_id,
             payload={"approval_task_id": str(task.id), "note": note},
         )
+        await self._advance_inquiry(tenant_id, quote.inquiry_id, InquiryStatus.QUOTE_DRAFTED)
         await self._session.flush()
         return quote
 
@@ -314,6 +321,7 @@ class QuoteService:
             event_type=QuoteEventType.SENT,
             actor_id=actor_id,
         )
+        await self._advance_inquiry(tenant_id, quote.inquiry_id, InquiryStatus.REPLIED)
         await self._session.flush()
         return quote
 
@@ -379,18 +387,37 @@ class QuoteService:
             )
         return tasks[0]
 
-    async def _require_inquiry(self, tenant_id: uuid.UUID, inquiry_id: uuid.UUID) -> None:
-        exists = await self._session.scalar(
-            select(Inquiry.id).where(
+    async def _load_inquiry(self, tenant_id: uuid.UUID, inquiry_id: uuid.UUID) -> Inquiry:
+        inquiry = await self._session.scalar(
+            select(Inquiry)
+            .where(
                 Inquiry.tenant_id == tenant_id,
                 Inquiry.id == inquiry_id,
             )
+            .with_for_update()
         )
-        if exists is None:
+        if inquiry is None:
             raise QuoteError(
                 QuoteErrorCode.INQUIRY_NOT_FOUND,
                 "inquiry not found for the tenant",
             )
+        return inquiry
+
+    async def _advance_inquiry(
+        self,
+        tenant_id: uuid.UUID,
+        inquiry_id: uuid.UUID | None,
+        target: InquiryStatus,
+    ) -> None:
+        if inquiry_id is None:
+            return
+        inquiry = await self._load_inquiry(tenant_id, inquiry_id)
+        self._apply_inquiry_status(inquiry, target)
+
+    @staticmethod
+    def _apply_inquiry_status(inquiry: Inquiry, target: InquiryStatus) -> None:
+        if can_transition(inquiry.status, target):
+            inquiry.status = target.value
 
     async def _load_products(
         self, *, tenant_id: uuid.UUID, product_ids: set[uuid.UUID]

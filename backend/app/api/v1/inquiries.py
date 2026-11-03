@@ -1,26 +1,34 @@
+import hashlib
+import logging
+import re
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.common import envelope, iso_datetime
 from app.api.deps import RequestContext, SessionDep, require_permission
-from app.api.enums import (
-    INQUIRY_STATUS_TRANSITIONS,
-    InquirySourceType,
-    InquiryStatus,
-)
 from app.api.errors import ApiError
+from app.core.config import settings
 from app.core.permissions import Permission
 from app.db.session import commit_or_rollback
 from app.db.tenant import set_tenant_context
+from app.inquiries import (
+    InquirySourceType,
+    InquiryStatus,
+    can_transition,
+)
 from app.models.customer import Customer
-from app.models.inquiry import Inquiry, InquiryRequirement
+from app.models.inquiry import Inquiry, InquiryAttachment, InquiryRequirement
 from app.models.tenant import TenantMembership
+from app.storage import ObjectStorage, StorageError, get_storage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/inquiries", tags=["inquiries"])
 
@@ -31,6 +39,7 @@ InquiryCreateContext = Annotated[
 InquiryUpdateContext = Annotated[
     RequestContext, Depends(require_permission(Permission.INQUIRY_UPDATE))
 ]
+StorageDep = Annotated[ObjectStorage, Depends(get_storage)]
 
 
 class InquiryCreate(BaseModel):
@@ -92,12 +101,28 @@ def _inquiry_summary(inquiry: Inquiry) -> dict[str, Any]:
     }
 
 
-def _inquiry_detail(inquiry: Inquiry) -> dict[str, Any]:
+def _inquiry_detail(
+    inquiry: Inquiry, attachments: list[InquiryAttachment] | None = None
+) -> dict[str, Any]:
     return {
         **_inquiry_summary(inquiry),
         "source_ref": inquiry.source_ref,
         "raw_body": inquiry.raw_body,
         "language": inquiry.language,
+        "attachments": [_attachment_detail(item) for item in attachments or []],
+    }
+
+
+def _attachment_detail(attachment: InquiryAttachment) -> dict[str, Any]:
+    return {
+        "id": str(attachment.id),
+        "inquiry_id": str(attachment.inquiry_id),
+        "filename": attachment.filename,
+        "content_type": attachment.content_type,
+        "size_bytes": attachment.size_bytes,
+        "checksum": attachment.checksum,
+        "scan_status": attachment.scan_status,
+        "created_at": iso_datetime(attachment.created_at),
     }
 
 
@@ -126,6 +151,58 @@ async def _get_inquiry(
     if inquiry is None:
         raise ApiError(404, "INQUIRY_NOT_FOUND", "inquiry not found")
     return inquiry
+
+
+async def _load_attachments(
+    session: AsyncSession, tenant_id: uuid.UUID, inquiry_id: uuid.UUID
+) -> list[InquiryAttachment]:
+    return list(
+        await session.scalars(
+            select(InquiryAttachment)
+            .where(
+                InquiryAttachment.tenant_id == tenant_id,
+                InquiryAttachment.inquiry_id == inquiry_id,
+            )
+            .order_by(InquiryAttachment.created_at, InquiryAttachment.id)
+        )
+    )
+
+
+async def _read_upload(file: UploadFile) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await file.read(1024 * 1024):
+        total += len(chunk)
+        if total > settings.attachment_max_bytes:
+            raise ApiError(
+                413,
+                "ATTACHMENT_TOO_LARGE",
+                f"attachment exceeds {settings.attachment_max_bytes} bytes",
+            )
+        chunks.append(chunk)
+    if total == 0:
+        raise ApiError(400, "ATTACHMENT_EMPTY", "attachment file is empty")
+    return b"".join(chunks)
+
+
+def _normalize_filename(raw: str | None) -> str:
+    filename = (raw or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if not filename or filename in {".", ".."}:
+        raise ApiError(400, "ATTACHMENT_FILENAME_INVALID", "attachment filename is required")
+    if len(filename) > 255:
+        raise ApiError(
+            400,
+            "ATTACHMENT_FILENAME_INVALID",
+            "attachment filename must be at most 255 characters",
+        )
+    return filename
+
+
+def _attachment_object_key(tenant_id: uuid.UUID, inquiry_id: uuid.UUID, filename: str) -> str:
+    suffix = Path(filename).suffix.lower()
+    if not re.fullmatch(r"\.[a-z0-9]{1,10}", suffix):
+        suffix = ""
+    return f"tenants/{tenant_id}/inquiries/{inquiry_id}/{uuid.uuid4().hex}{suffix}"
 
 
 async def _ensure_customer(
@@ -157,8 +234,7 @@ async def _ensure_owner_member(
 def _ensure_status_transition(inquiry: Inquiry, target: InquiryStatus) -> None:
     if target.value == inquiry.status:
         return
-    allowed = INQUIRY_STATUS_TRANSITIONS[InquiryStatus(inquiry.status)]
-    if target not in allowed:
+    if not can_transition(inquiry.status, target):
         raise ApiError(
             409,
             "INVALID_STATUS_TRANSITION",
@@ -246,7 +322,8 @@ async def get_inquiry(
     session: SessionDep,
 ) -> dict[str, Any]:
     inquiry = await _get_inquiry(session, context.tenant_id, inquiry_id)
-    return envelope(_inquiry_detail(inquiry), context)
+    attachments = await _load_attachments(session, context.tenant_id, inquiry.id)
+    return envelope(_inquiry_detail(inquiry, attachments), context)
 
 
 @router.patch("/{inquiry_id}")
@@ -278,7 +355,52 @@ async def update_inquiry(
     await session.flush()
     await session.refresh(inquiry)
     await commit_or_rollback(session)
-    return envelope(_inquiry_detail(inquiry), context)
+    attachments = await _load_attachments(session, context.tenant_id, inquiry.id)
+    return envelope(_inquiry_detail(inquiry, attachments), context)
+
+
+@router.post("/{inquiry_id}/attachments", status_code=status.HTTP_201_CREATED)
+async def upload_attachment(
+    inquiry_id: uuid.UUID,
+    file: Annotated[UploadFile, File()],
+    context: InquiryUpdateContext,
+    session: SessionDep,
+    storage: StorageDep,
+) -> dict[str, Any]:
+    inquiry = await _get_inquiry(session, context.tenant_id, inquiry_id)
+    data = await _read_upload(file)
+    filename = _normalize_filename(file.filename)
+    content_type = file.content_type or "application/octet-stream"
+    object_key = _attachment_object_key(context.tenant_id, inquiry.id, filename)
+
+    try:
+        await storage.put(object_key=object_key, data=data, content_type=content_type)
+    except StorageError as exc:
+        logger.warning("attachment upload failed for inquiry %s: %s", inquiry.id, exc)
+        raise ApiError(502, "STORAGE_UNAVAILABLE", "attachment storage is unavailable") from exc
+
+    attachment = InquiryAttachment(
+        tenant_id=context.tenant_id,
+        inquiry_id=inquiry.id,
+        object_key=object_key,
+        filename=filename,
+        content_type=content_type[:255],
+        size_bytes=len(data),
+        checksum=hashlib.sha256(data).hexdigest(),
+        scan_status="PENDING",
+    )
+    session.add(attachment)
+    try:
+        await session.flush()
+        await session.refresh(attachment)
+        await commit_or_rollback(session)
+    except Exception:
+        try:
+            await storage.delete(object_key=object_key)
+        except StorageError as exc:
+            logger.warning("failed to clean up orphaned object %s: %s", object_key, exc)
+        raise
+    return envelope(_attachment_detail(attachment), context)
 
 
 @router.get("/{inquiry_id}/requirements")

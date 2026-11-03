@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     s3_bucket: str | None = None
     s3_access_key: str | None = None
     s3_secret_key: str | None = None
+    s3_region: str = "us-east-1"
+    upload_dir: str = "var/uploads"
+    attachment_max_bytes: int = 20 * 1024 * 1024
 
     llm_provider: str | None = None
     llm_api_key: str | None = None

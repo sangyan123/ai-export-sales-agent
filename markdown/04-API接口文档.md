@@ -174,10 +174,10 @@
 
 | 当前状态 | 允许流转 |
 |---|---|
-| `RECEIVED` | `PARSING`、`NEEDS_INFO`、`READY_FOR_MATCH`、`ARCHIVED` |
+| `RECEIVED` | `PARSING`、`NEEDS_INFO`、`READY_FOR_MATCH`、`QUOTE_DRAFTED`、`ARCHIVED` |
 | `PARSING` | `NEEDS_INFO`、`READY_FOR_MATCH` |
 | `NEEDS_INFO` | `RECEIVED`、`PARSING`、`READY_FOR_MATCH`、`ARCHIVED` |
-| `READY_FOR_MATCH` | `MATCHED`、`NEEDS_INFO` |
+| `READY_FOR_MATCH` | `MATCHED`、`QUOTE_DRAFTED`、`NEEDS_INFO` |
 | `MATCHED` | `QUOTE_DRAFTED`、`NEEDS_INFO` |
 | `QUOTE_DRAFTED` | `PENDING_APPROVAL`、`MATCHED` |
 | `PENDING_APPROVAL` | `QUOTE_APPROVED`、`QUOTE_DRAFTED` |
@@ -201,6 +201,33 @@
 ```
 
 `schema_version` 省略时为 `1`；同一版本重复提交会覆盖 `confirmed`。`GET` 返回最高 `schema_version` 的记录，尚未生成解析结果时返回 `data: null`。
+
+上传附件（`POST /inquiries/{inquiry_id}/attachments`）使用 `multipart/form-data`，字段名为 `file`：
+
+```bash
+curl -X POST "$API/api/v1/inquiries/71a1.../attachments" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -F "file=@rfq-2026-11.xlsx"
+```
+
+响应 `201`：
+
+```json
+{
+  "data": {
+    "id": "d0c4...",
+    "inquiry_id": "71a1...",
+    "filename": "rfq-2026-11.xlsx",
+    "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "size_bytes": 48213,
+    "checksum": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "scan_status": "PENDING",
+    "created_at": "2026-11-03T03:00:00Z"
+  }
+}
+```
+
+单个文件默认上限 20 MB（`ATTACHMENT_MAX_BYTES`），超出返回 `413 ATTACHMENT_TOO_LARGE`；空文件返回 `400 ATTACHMENT_EMPTY`；对象存储不可用返回 `502 STORAGE_UNAVAILABLE`。文件名会剥离路径部分后保存，对象键由服务端生成。上传成功后 `GET /inquiries/{inquiry_id}` 的 `attachments` 字段返回该询盘的附件列表，`scan_status` 初始为 `PENDING`，由后续病毒扫描流程更新。
 
 解析任务响应：
 
@@ -264,6 +291,18 @@
 ```
 
 传入 `inquiry_id` 时，服务端会校验该询盘属于当前租户；不存在或跨租户均返回 `404 INQUIRY_NOT_FOUND`。
+
+关联询盘后，报价生命周期会在同一事务内联动询盘状态：
+
+| 报价动作 | 询盘目标状态 |
+|---|---|
+| 创建报价草案 | `QUOTE_DRAFTED` |
+| 提交审批 | `PENDING_APPROVAL` |
+| 批准 | `QUOTE_APPROVED` |
+| 驳回 | `QUOTE_DRAFTED` |
+| 标记已发送 | `REPLIED` |
+
+仅当询盘当前状态允许流转时才更新；取消、过期等动作暂不改动询盘状态。
 
 批准请求：
 
