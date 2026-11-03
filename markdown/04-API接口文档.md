@@ -258,6 +258,53 @@ curl -X POST "$API/api/v1/inquiries/71a1.../attachments" \
 }
 ```
 
+`POST /inquiries/{inquiry_id}/matches` 为同步接口，仅允许 `READY_FOR_MATCH`、`MATCHED` 状态调用；尚无解析结果返回 `409 REQUIREMENTS_NOT_READY`，缺少产品品类或关键字段返回 `409 REQUIREMENTS_INCOMPLETE`，其他状态返回 `409 INQUIRY_STATUS_NOT_MATCHABLE`，跨租户或不存在的询盘返回 `404 INQUIRY_NOT_FOUND`。匹配使用最新一版 `inquiry_requirements`，人工确认值优先于解析值；先按产品品类硬过滤，仅评估 `ACTIVE` 产品，再对 `standard_code`、`material`、`diameter`、`length`、`surface_finish` 加权评分，硬字段冲突直接判定为 `CONFLICT`，MOQ 不足只写入说明、不参与判定。每次生成会替换该询盘既有候选，最多保留 10 条，并按匹配状态、得分、产品编码排序；存在 `EXACT` 或 `POSSIBLE` 时询盘进入 `MATCHED`。
+
+匹配响应：
+
+```json
+{
+  "data": {
+    "inquiry_id": "71a1...",
+    "inquiry_status": "MATCHED",
+    "schema_version": 1,
+    "matches": [
+      {
+        "id": "c3f0...",
+        "product_id": "7c1d...",
+        "product_code": "BOLT-EXT",
+        "product_name": "Hex bolt SS304 M8x50",
+        "category": "BOLT",
+        "standard_code": "DIN933",
+        "material": "SS304",
+        "grade": "A2-70",
+        "diameter": "M8",
+        "length": "50mm",
+        "surface_finish": "PLAIN",
+        "sales_unit": "PCS",
+        "moq": "1000",
+        "score": "1.0000",
+        "match_status": "EXACT",
+        "matched_fields": [
+          "standard_code",
+          "material",
+          "grade",
+          "diameter",
+          "length",
+          "surface_finish"
+        ],
+        "conflict_fields": [],
+        "unknown_fields": [],
+        "explanation": "所有指定字段均匹配",
+        "created_at": "2026-11-03T08:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+`GET /inquiries/{inquiry_id}/matches` 返回最近一次生成的候选，排序与生成接口一致；尚未生成时 `schema_version` 为 `null`，`matches` 为空数组。
+
 ## 7. 报价与审批接口
 
 | 方法 | 路径 | 权限 | 说明 |
@@ -408,7 +455,7 @@ MVP 的邮件可只生成草案、复制文本或下载文件；`send` 接口可
 | resource_type | action |
 |---|---|
 | `QUOTE` | `quote.create`、`quote.create_version`、`quote.submit`、`quote.approve`、`quote.reject`、`quote.recalculate`、`quote.revise`、`quote.send`、`quote.expire`、`quote.cancel` |
-| `INQUIRY` | `inquiry.create`、`inquiry.update`、`inquiry.attachment.upload`、`inquiry.analysis.request`、`inquiry.analysis.completed`、`inquiry.analysis.failed` |
+| `INQUIRY` | `inquiry.create`、`inquiry.update`、`inquiry.attachment.upload`、`inquiry.analysis.request`、`inquiry.analysis.completed`、`inquiry.analysis.failed`、`inquiry.matches.generate` |
 | `WORKFLOW_RUN` | `workflow.cancel` |
 
 ## 10. OpenAPI 规范要求

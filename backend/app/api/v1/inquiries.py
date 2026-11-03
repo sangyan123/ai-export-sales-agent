@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.common import envelope, iso_datetime
+from app.api.common import decimal_str, envelope, iso_datetime
 from app.api.deps import RequestContext, SessionDep, require_permission
 from app.api.errors import ApiError
 from app.audit import AuditService, client_ip_hash
@@ -34,8 +34,11 @@ from app.inquiries import (
     can_transition,
 )
 from app.inquiries.analysis import InquiryAnalysisService, run_inquiry_analysis
+from app.matching.service import ProductMatchingService
 from app.models.customer import Customer
 from app.models.inquiry import Inquiry, InquiryAttachment, InquiryRequirement
+from app.models.matching import ProductMatch
+from app.models.product import Product
 from app.models.tenant import TenantMembership
 from app.storage import ObjectStorage, StorageError, get_storage
 
@@ -50,7 +53,7 @@ InquiryCreateContext = Annotated[
 InquiryUpdateContext = Annotated[
     RequestContext, Depends(require_permission(Permission.INQUIRY_UPDATE))
 ]
-InquiryAnalysisContext = Annotated[RequestContext, Depends(require_permission(Permission.AI_RUN))]
+InquiryAiRunContext = Annotated[RequestContext, Depends(require_permission(Permission.AI_RUN))]
 StorageDep = Annotated[ObjectStorage, Depends(get_storage)]
 
 
@@ -170,6 +173,31 @@ def _requirement_detail(requirement: InquiryRequirement) -> dict[str, Any]:
         "model_id": requirement.model_id,
         "created_at": iso_datetime(requirement.created_at),
         "updated_at": iso_datetime(requirement.updated_at),
+    }
+
+
+def _match_detail(match: ProductMatch, product: Product) -> dict[str, Any]:
+    return {
+        "id": str(match.id),
+        "product_id": str(match.product_id),
+        "product_code": product.product_code,
+        "product_name": product.product_name,
+        "category": product.category,
+        "standard_code": product.standard_code,
+        "material": product.material,
+        "grade": product.grade,
+        "diameter": product.diameter,
+        "length": product.length,
+        "surface_finish": product.surface_finish,
+        "sales_unit": product.sales_unit,
+        "moq": decimal_str(product.moq),
+        "score": decimal_str(match.score),
+        "match_status": match.match_status,
+        "matched_fields": match.matched_fields,
+        "conflict_fields": match.conflict_fields,
+        "unknown_fields": match.unknown_fields,
+        "explanation": match.explanation,
+        "created_at": iso_datetime(match.created_at),
     }
 
 
@@ -473,7 +501,7 @@ async def upload_attachment(
 @router.post("/{inquiry_id}/analysis", status_code=status.HTTP_202_ACCEPTED)
 async def create_analysis(
     inquiry_id: uuid.UUID,
-    context: InquiryAnalysisContext,
+    context: InquiryAiRunContext,
     session: SessionDep,
     request: Request,
     background_tasks: BackgroundTasks,
@@ -503,6 +531,66 @@ async def create_analysis(
             "workflow_run_id": str(run.id),
             "status": run.status,
             "inquiry_id": str(inquiry_id),
+        },
+        context,
+    )
+
+
+@router.get("/{inquiry_id}/matches")
+async def get_matches(
+    inquiry_id: uuid.UUID,
+    context: InquiryReadContext,
+    session: SessionDep,
+) -> dict[str, Any]:
+    result = await ProductMatchingService(session).list_matches(
+        tenant_id=context.tenant_id,
+        inquiry_id=inquiry_id,
+    )
+    return envelope(
+        {
+            "inquiry_id": str(inquiry_id),
+            "inquiry_status": result.inquiry.status,
+            "schema_version": (result.requirement.schema_version if result.requirement else None),
+            "matches": [_match_detail(match, product) for match, product in result.pairs],
+        },
+        context,
+    )
+
+
+@router.post("/{inquiry_id}/matches")
+async def generate_matches(
+    inquiry_id: uuid.UUID,
+    context: InquiryAiRunContext,
+    session: SessionDep,
+    request: Request,
+) -> dict[str, Any]:
+    result = await ProductMatchingService(session).generate(
+        tenant_id=context.tenant_id,
+        inquiry_id=inquiry_id,
+    )
+    status_counts: dict[str, int] = {}
+    for match, _ in result.pairs:
+        status_counts[match.match_status] = status_counts.get(match.match_status, 0) + 1
+    _record_inquiry_audit(
+        request,
+        context,
+        session,
+        "inquiry.matches.generate",
+        inquiry_id,
+        {
+            "requirement_id": str(result.requirement.id),
+            "schema_version": result.requirement.schema_version,
+            "candidate_count": len(result.pairs),
+            "status_counts": status_counts,
+        },
+    )
+    await commit_or_rollback(session)
+    return envelope(
+        {
+            "inquiry_id": str(inquiry_id),
+            "inquiry_status": result.inquiry.status,
+            "schema_version": result.requirement.schema_version,
+            "matches": [_match_detail(match, product) for match, product in result.pairs],
         },
         context,
     )
