@@ -1,6 +1,7 @@
-import type { CustomerStatus, OverrideApprovalStatus, PriceBasis } from '@/types/customer'
+import type { CustomerStatus, OverrideApprovalStatus } from '@/types/customer'
 import type { FollowupStatus } from '@/api/followups'
 import type { InquiryStatus } from '@/api/inquiries'
+import type { CatalogStatus, PriceBasis, ProductCategory } from '@/types/product'
 
 export type TagType = 'primary' | 'success' | 'info' | 'warning' | 'danger'
 
@@ -31,6 +32,43 @@ export const PRICE_BASIS_OPTIONS = Object.entries(PRICE_BASIS_LABELS).map(([valu
   value: value as PriceBasis,
   label,
 }))
+
+export const PRODUCT_CATEGORY_LABELS: Record<ProductCategory, string> = {
+  BOLT: '螺栓',
+  NUT: '螺母',
+  SCREW: '螺钉',
+  WASHER: '垫圈',
+  OTHER: '其他',
+}
+
+export const PRODUCT_CATEGORY_TAG: Record<ProductCategory, TagType> = {
+  BOLT: 'primary',
+  NUT: 'success',
+  SCREW: 'warning',
+  WASHER: 'info',
+  OTHER: 'info',
+}
+
+export const PRODUCT_CATEGORY_OPTIONS = Object.entries(PRODUCT_CATEGORY_LABELS).map(
+  ([value, label]) => ({ value: value as ProductCategory, label }),
+)
+
+export const CATALOG_STATUS_LABELS: Record<CatalogStatus, string> = {
+  ACTIVE: '启用',
+  INACTIVE: '停用',
+  ARCHIVED: '已归档',
+}
+
+export const CATALOG_STATUS_TAG: Record<CatalogStatus, TagType> = {
+  ACTIVE: 'success',
+  INACTIVE: 'warning',
+  ARCHIVED: 'info',
+}
+
+export const CATALOG_STATUS_OPTIONS = Object.entries(CATALOG_STATUS_LABELS).map(
+  ([value, label]) => ({ value: value as CatalogStatus, label }),
+)
+
 
 export const APPROVAL_STATUS_LABELS: Record<OverrideApprovalStatus, string> = {
   PENDING: '待审批',

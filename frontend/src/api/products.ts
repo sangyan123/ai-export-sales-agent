@@ -1,30 +1,26 @@
-import { getEnvelope } from './http'
+import { getData, getEnvelope } from './http'
 
-export type ProductCategory = 'BOLT' | 'NUT' | 'SCREW' | 'WASHER' | 'OTHER'
+import type {
+  Product,
+  ProductListParams,
+  ProductPayload,
+  ProductSummary,
+} from '@/types/product'
 
-export interface ProductSummary {
-  id: string
-  product_code: string
-  product_name: string
-  category: ProductCategory
-  standard_code: string | null
-  material: string | null
-  grade: string | null
-  diameter: string | null
-  length: string | null
-  sales_unit: string
-  moq: string | null
-  status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED'
-}
-
-export interface ProductListParams {
-  page?: number
-  page_size?: number
-  category?: ProductCategory
-  status?: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED'
-  q?: string
-}
+export type { ProductSummary } from '@/types/product'
 
 export function fetchProducts(params: ProductListParams = {}) {
   return getEnvelope<ProductSummary[]>('/products', { params })
+}
+
+export function fetchProduct(productId: string) {
+  return getData<Product>(`/products/${productId}`)
+}
+
+export function createProduct(payload: ProductPayload) {
+  return getData<Product>('/products', { method: 'post', data: payload })
+}
+
+export function updateProduct(productId: string, payload: Partial<ProductPayload>) {
+  return getData<Product>(`/products/${productId}`, { method: 'patch', data: payload })
 }
