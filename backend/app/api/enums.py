@@ -26,3 +26,14 @@ class OverrideApprovalStatus(StrEnum):
     PENDING = "PENDING"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
+
+
+class FollowupStatus(StrEnum):
+    PENDING = "PENDING"
+    DONE = "DONE"
+    CANCELLED = "CANCELLED"
+
+
+class FollowupSource(StrEnum):
+    MANUAL = "MANUAL"
+    RULE = "RULE"

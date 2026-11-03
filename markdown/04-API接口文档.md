@@ -405,7 +405,8 @@ curl -X POST "$API/api/v1/quotes/{quote_id}/documents?format=PDF" \
 |---|---|---|---|
 | GET/POST | `/customers` | customer:read/create | 客户列表/创建 |
 | GET/PATCH | `/customers/{customer_id}` | customer:read/update | 客户详情/更新 |
-| POST | `/customers/{customer_id}/contacts` | customer:update | 添加联系人 |
+| GET/POST | `/customers/{customer_id}/contacts` | customer:read/update | 联系人列表/添加 |
+| PATCH | `/customers/{customer_id}/contacts/{contact_id}` | customer:update | 更新联系人 |
 | POST | `/inquiries/{inquiry_id}/email-drafts` | email:draft | 生成邮件草案 |
 | GET | `/email-drafts/{draft_id}` | email:read | 查看邮件草案 |
 | PATCH | `/email-drafts/{draft_id}` | email:update | 编辑邮件 |
@@ -413,6 +414,61 @@ curl -X POST "$API/api/v1/quotes/{quote_id}/documents?format=PDF" \
 | POST | `/email-drafts/{draft_id}/send` | email:send | 后续版本启用；仅批准后发送 |
 | GET/POST | `/followups` | followup:read/create | 跟进任务列表/创建 |
 | PATCH | `/followups/{task_id}` | followup:update | 完成/重新安排任务 |
+
+联系人创建仅要求 `name`，其余字段可选；邮箱会去除首尾空格并转小写，语言标签归一化为小写（如 `en-us`）。`is_primary=true` 会在同一事务内取消该客户原有主联系人，保证每个客户最多一个主联系人。`PATCH` 可更新任意提供字段，可选字段传 `null` 表示清空，`name` 不允许为空；跨租户或不存在的客户/联系人分别返回 `404 CUSTOMER_NOT_FOUND`、`404 CONTACT_NOT_FOUND`，格式错误返回 `422`。
+
+```json
+{
+  "data": {
+    "id": "6d1f...",
+    "customer_id": "e1b2...",
+    "name": "Alice Chen",
+    "email": "alice@example.com",
+    "phone": "+86 138 0000 0000",
+    "language": "en-us",
+    "job_title": "Purchasing Manager",
+    "is_primary": true,
+    "created_at": "2026-11-03T10:00:00Z",
+    "updated_at": "2026-11-03T10:00:00Z"
+  }
+}
+```
+
+跟进任务创建请求：
+
+```json
+{
+  "customer_id": "e1b2...",
+  "inquiry_id": "71a1...",
+  "title": "Call buyer about packaging requirements",
+  "due_at": "2026-11-05T09:00:00Z",
+  "assigned_to": "8f3c..."
+}
+```
+
+`customer_id`、`title`、`due_at` 必填，`due_at` 必须包含时区；`inquiry_id` 可省略，提供时必须属于该客户，否则返回 `400 FOLLOWUP_CUSTOMER_MISMATCH`；`assigned_to` 省略时默认为当前用户，指定时必须为租户有效成员，否则返回 `400 ASSIGNEE_NOT_MEMBER`。任务创建后状态为 `PENDING`、来源为 `MANUAL`，并记录 `followup.create` 审计事件。
+
+跟进任务响应：
+
+```json
+{
+  "data": {
+    "id": "b7c4...",
+    "customer_id": "e1b2...",
+    "inquiry_id": "71a1...",
+    "title": "Call buyer about packaging requirements",
+    "due_at": "2026-11-05T09:00:00Z",
+    "assigned_to": "8f3c...",
+    "status": "PENDING",
+    "source": "MANUAL",
+    "completed_at": null,
+    "created_at": "2026-11-03T10:00:00Z",
+    "updated_at": "2026-11-03T10:00:00Z"
+  }
+}
+```
+
+`GET /followups` 支持分页和 `status`、`assigned_to`、`customer_id`、`inquiry_id`、`overdue=true` 过滤，按 `due_at` 升序返回；`overdue` 仅匹配 `PENDING` 且 `due_at` 早于当前时间的任务。`PATCH /followups/{task_id}` 可更新 `title`、`due_at`、`assigned_to`、`status`，至少提供一项。状态流转仅允许 `PENDING -> DONE/CANCELLED`、`DONE -> PENDING`、`CANCELLED -> PENDING`，其他流转返回 `409 INVALID_STATUS_TRANSITION`；进入 `DONE` 写入 `completed_at`，重新打开或取消时清空。`assigned_to` 传 `null` 表示取消指派。跨租户或不存在的任务返回 `404 FOLLOWUP_NOT_FOUND`，写操作记录 `followup.update` 审计事件。
 
 MVP 的邮件可只生成草案、复制文本或下载文件；`send` 接口可以暂不开放，避免出现未完成邮件供应商和审批机制就对外承诺可发送。
 
@@ -485,6 +541,7 @@ MVP 的邮件可只生成草案、复制文本或下载文件；`send` 接口可
 | `QUOTE` | `quote.create`、`quote.create_version`、`quote.submit`、`quote.approve`、`quote.reject`、`quote.recalculate`、`quote.revise`、`quote.send`、`quote.expire`、`quote.cancel` |
 | `INQUIRY` | `inquiry.create`、`inquiry.update`、`inquiry.attachment.upload`、`inquiry.analysis.request`、`inquiry.analysis.completed`、`inquiry.analysis.failed`、`inquiry.matches.generate` |
 | `EMAIL_DRAFT` | `email.draft.create`、`email.draft.update`、`email.draft.approve` |
+| `FOLLOWUP` | `followup.create`、`followup.update` |
 | `WORKFLOW_RUN` | `workflow.cancel` |
 
 ## 10. OpenAPI 规范要求

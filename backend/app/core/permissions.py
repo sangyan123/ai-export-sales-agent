@@ -31,7 +31,9 @@ class Permission(StrEnum):
     CUSTOMER_READ = "customer:read"
     CUSTOMER_CREATE = "customer:create"
     CUSTOMER_UPDATE = "customer:update"
-    FOLLOWUP_MANAGE = "followup:manage"
+    FOLLOWUP_READ = "followup:read"
+    FOLLOWUP_CREATE = "followup:create"
+    FOLLOWUP_UPDATE = "followup:update"
     WORKFLOW_READ = "workflow:read"
     WORKFLOW_CANCEL = "workflow:cancel"
     AUDIT_READ = "audit:read"
@@ -47,6 +49,7 @@ _READ_ONLY = frozenset(
         Permission.QUOTE_READ,
         Permission.CUSTOMER_READ,
         Permission.EMAIL_READ,
+        Permission.FOLLOWUP_READ,
         Permission.WORKFLOW_READ,
     }
 )
@@ -64,7 +67,8 @@ _SALES_REP = _READ_ONLY | frozenset(
         Permission.EMAIL_UPDATE,
         Permission.CUSTOMER_CREATE,
         Permission.CUSTOMER_UPDATE,
-        Permission.FOLLOWUP_MANAGE,
+        Permission.FOLLOWUP_CREATE,
+        Permission.FOLLOWUP_UPDATE,
         Permission.WORKFLOW_CANCEL,
     }
 )

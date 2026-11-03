@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -5,7 +6,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.common import decimal_str, envelope, iso_datetime
@@ -15,7 +16,7 @@ from app.api.errors import ApiError
 from app.core.permissions import Permission
 from app.db.session import commit_or_rollback
 from app.db.tenant import set_tenant_context
-from app.models.customer import Customer, CustomerPriceOverride
+from app.models.customer import Contact, Customer, CustomerPriceOverride
 from app.models.product import Product
 from app.models.tenant import TenantMembership
 
@@ -81,6 +82,107 @@ class CustomerUpdate(BaseModel):
         return value.upper() if value else None
 
 
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+LANGUAGE_PATTERN = re.compile(r"^[a-z]{2}(-[a-z]{2})?$")
+
+
+def _normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+class ContactCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    email: str | None = Field(default=None, max_length=320)
+    phone: str | None = Field(default=None, max_length=40)
+    language: str | None = Field(default=None, max_length=16)
+    job_title: str | None = Field(default=None, max_length=120)
+    is_primary: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str | None) -> str | None:
+        normalized = _normalize_optional_text(value)
+        if normalized is None:
+            return None
+        normalized = normalized.lower()
+        if not EMAIL_PATTERN.fullmatch(normalized):
+            raise ValueError("invalid email address")
+        return normalized
+
+    @field_validator("phone", "job_title")
+    @classmethod
+    def strip_optional_text(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value)
+
+    @field_validator("language")
+    @classmethod
+    def normalize_language(cls, value: str | None) -> str | None:
+        normalized = _normalize_optional_text(value)
+        if normalized is None:
+            return None
+        normalized = normalized.lower()
+        if not LANGUAGE_PATTERN.fullmatch(normalized):
+            raise ValueError("language must look like 'en' or 'en-us'")
+        return normalized
+
+
+class ContactUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=160)
+    email: str | None = Field(default=None, max_length=320)
+    phone: str | None = Field(default=None, max_length=40)
+    language: str | None = Field(default=None, max_length=16)
+    job_title: str | None = Field(default=None, max_length=120)
+    is_primary: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str | None) -> str | None:
+        normalized = _normalize_optional_text(value)
+        if normalized is None:
+            return None
+        normalized = normalized.lower()
+        if not EMAIL_PATTERN.fullmatch(normalized):
+            raise ValueError("invalid email address")
+        return normalized
+
+    @field_validator("phone", "job_title")
+    @classmethod
+    def strip_optional_text(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value)
+
+    @field_validator("language")
+    @classmethod
+    def normalize_language(cls, value: str | None) -> str | None:
+        normalized = _normalize_optional_text(value)
+        if normalized is None:
+            return None
+        normalized = normalized.lower()
+        if not LANGUAGE_PATTERN.fullmatch(normalized):
+            raise ValueError("language must look like 'en' or 'en-us'")
+        return normalized
+
+
 class PriceOverrideCreate(BaseModel):
     product_id: uuid.UUID
     currency: str = Field(pattern=r"^[A-Za-z]{3}$")
@@ -124,6 +226,21 @@ def _customer_detail(customer: Customer) -> dict[str, Any]:
     }
 
 
+def _contact_detail(contact: Contact) -> dict[str, Any]:
+    return {
+        "id": str(contact.id),
+        "customer_id": str(contact.customer_id),
+        "name": contact.name,
+        "email": contact.email,
+        "phone": contact.phone,
+        "language": contact.language,
+        "job_title": contact.job_title,
+        "is_primary": contact.is_primary,
+        "created_at": iso_datetime(contact.created_at),
+        "updated_at": iso_datetime(contact.updated_at),
+    }
+
+
 def _override_detail(override: CustomerPriceOverride) -> dict[str, Any]:
     return {
         "id": str(override.id),
@@ -161,6 +278,46 @@ async def _get_customer(
     if customer is None:
         raise ApiError(404, "CUSTOMER_NOT_FOUND", "customer not found")
     return customer
+
+
+async def _get_contact(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    customer_id: uuid.UUID,
+    contact_id: uuid.UUID,
+) -> Contact:
+    await _get_customer(session, tenant_id, customer_id)
+    contact = await session.scalar(
+        select(Contact).where(
+            Contact.tenant_id == tenant_id,
+            Contact.customer_id == customer_id,
+            Contact.id == contact_id,
+        )
+    )
+    if contact is None:
+        raise ApiError(404, "CONTACT_NOT_FOUND", "contact not found")
+    return contact
+
+
+async def _clear_primary_contact(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    customer_id: uuid.UUID,
+    *,
+    exclude_id: uuid.UUID | None = None,
+) -> None:
+    statement = (
+        update(Contact)
+        .where(
+            Contact.tenant_id == tenant_id,
+            Contact.customer_id == customer_id,
+            Contact.is_primary.is_(True),
+        )
+        .values(is_primary=False)
+    )
+    if exclude_id is not None:
+        statement = statement.where(Contact.id != exclude_id)
+    await session.execute(statement)
 
 
 async def _get_override(
@@ -325,6 +482,89 @@ async def update_customer(
     await session.refresh(customer)
     await commit_or_rollback(session)
     return envelope(_customer_detail(customer), context)
+
+
+@router.get("/customers/{customer_id}/contacts")
+async def list_contacts(
+    customer_id: uuid.UUID,
+    context: CustomerReadContext,
+    session: SessionDep,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> dict[str, Any]:
+    await _get_customer(session, context.tenant_id, customer_id)
+    conditions = [
+        Contact.tenant_id == context.tenant_id,
+        Contact.customer_id == customer_id,
+    ]
+    total = await session.scalar(select(func.count()).select_from(Contact).where(*conditions))
+    contacts = list(
+        await session.scalars(
+            select(Contact)
+            .where(*conditions)
+            .order_by(Contact.is_primary.desc(), Contact.created_at)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    )
+    return envelope(
+        [_contact_detail(contact) for contact in contacts],
+        context,
+        page=page,
+        page_size=page_size,
+        total=int(total or 0),
+    )
+
+
+@router.post("/customers/{customer_id}/contacts", status_code=status.HTTP_201_CREATED)
+async def create_contact(
+    customer_id: uuid.UUID,
+    payload: ContactCreate,
+    context: CustomerUpdateContext,
+    session: SessionDep,
+) -> dict[str, Any]:
+    await _get_customer(session, context.tenant_id, customer_id)
+    if payload.is_primary:
+        await _clear_primary_contact(session, context.tenant_id, customer_id)
+
+    contact = Contact(
+        tenant_id=context.tenant_id,
+        customer_id=customer_id,
+        **payload.model_dump(),
+    )
+    session.add(contact)
+    await session.flush()
+    await session.refresh(contact)
+    await commit_or_rollback(session)
+    return envelope(_contact_detail(contact), context)
+
+
+@router.patch("/customers/{customer_id}/contacts/{contact_id}")
+async def update_contact(
+    customer_id: uuid.UUID,
+    contact_id: uuid.UUID,
+    payload: ContactUpdate,
+    context: CustomerUpdateContext,
+    session: SessionDep,
+) -> dict[str, Any]:
+    contact = await _get_contact(session, context.tenant_id, customer_id, contact_id)
+    data = payload.model_dump(exclude_unset=True)
+    if "name" in data and data["name"] is None:
+        raise ApiError(422, "VALIDATION_ERROR", "name cannot be null")
+    if data.get("is_primary") is True:
+        await _clear_primary_contact(
+            session,
+            context.tenant_id,
+            customer_id,
+            exclude_id=contact.id,
+        )
+
+    for field, value in data.items():
+        setattr(contact, field, value)
+    await session.flush()
+    await session.refresh(contact)
+    await commit_or_rollback(session)
+    return envelope(_contact_detail(contact), context)
 
 
 @router.get("/customers/{customer_id}/price-overrides")

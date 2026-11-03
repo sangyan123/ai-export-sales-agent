@@ -3,6 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -12,6 +13,7 @@ from sqlalchemy import (
     Numeric,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -41,6 +43,43 @@ class Customer(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
     owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
+
+
+class Contact(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
+    __tablename__ = "contacts"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_contacts_tenant_id_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "customer_id"],
+            ["customers.tenant_id", "customers.id"],
+            name="fk_contacts_tenant_customer",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "email IS NULL OR email ~* '^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$'",
+            name="email_format",
+        ),
+        CheckConstraint(
+            "language IS NULL OR language ~ '^[a-z]{2}(-[A-Za-z]{2})?$'",
+            name="language_format",
+        ),
+        Index("ix_contacts_tenant_customer", "tenant_id", "customer_id"),
+        Index(
+            "uq_contacts_tenant_customer_primary",
+            "tenant_id",
+            "customer_id",
+            unique=True,
+            postgresql_where=text("is_primary"),
+        ),
+    )
+
+    customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(320))
+    phone: Mapped[str | None] = mapped_column(String(40))
+    language: Mapped[str | None] = mapped_column(String(16))
+    job_title: Mapped[str | None] = mapped_column(String(120))
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
 
 class CustomerPriceOverride(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
