@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.common import envelope, iso_datetime
 from app.api.deps import RequestContext, SessionDep, require_permission
 from app.api.errors import ApiError
+from app.audit import AuditService, client_ip_hash
 from app.core.config import settings
 from app.core.permissions import Permission
 from app.db.session import commit_or_rollback
@@ -40,6 +41,26 @@ InquiryUpdateContext = Annotated[
     RequestContext, Depends(require_permission(Permission.INQUIRY_UPDATE))
 ]
 StorageDep = Annotated[ObjectStorage, Depends(get_storage)]
+
+
+def _record_inquiry_audit(
+    request: Request,
+    context: RequestContext,
+    session: AsyncSession,
+    action: str,
+    inquiry_id: uuid.UUID,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    AuditService(session).record(
+        tenant_id=context.tenant_id,
+        actor_id=context.user_id,
+        action=action,
+        resource_type="INQUIRY",
+        resource_id=inquiry_id,
+        request_id=context.request_id,
+        ip_hash=client_ip_hash(request),
+        metadata=metadata,
+    )
 
 
 class InquiryCreate(BaseModel):
@@ -289,6 +310,7 @@ async def create_inquiry(
     payload: InquiryCreate,
     context: InquiryCreateContext,
     session: SessionDep,
+    request: Request,
 ) -> dict[str, Any]:
     await set_tenant_context(session, context.tenant_id)
     await _ensure_customer(session, context.tenant_id, payload.customer_id)
@@ -311,6 +333,18 @@ async def create_inquiry(
     session.add(inquiry)
     await session.flush()
     await session.refresh(inquiry)
+    _record_inquiry_audit(
+        request,
+        context,
+        session,
+        "inquiry.create",
+        inquiry.id,
+        {
+            "subject": inquiry.subject,
+            "customer_id": str(inquiry.customer_id),
+            "source_type": inquiry.source_type,
+        },
+    )
     await commit_or_rollback(session)
     return envelope(_inquiry_detail(inquiry), context)
 
@@ -332,6 +366,7 @@ async def update_inquiry(
     payload: InquiryUpdate,
     context: InquiryUpdateContext,
     session: SessionDep,
+    request: Request,
 ) -> dict[str, Any]:
     inquiry = await _get_inquiry(session, context.tenant_id, inquiry_id)
     data = payload.model_dump(exclude_unset=True)
@@ -354,6 +389,14 @@ async def update_inquiry(
         setattr(inquiry, field, value)
     await session.flush()
     await session.refresh(inquiry)
+    _record_inquiry_audit(
+        request,
+        context,
+        session,
+        "inquiry.update",
+        inquiry.id,
+        {"fields": sorted(data)},
+    )
     await commit_or_rollback(session)
     attachments = await _load_attachments(session, context.tenant_id, inquiry.id)
     return envelope(_inquiry_detail(inquiry, attachments), context)
@@ -366,6 +409,7 @@ async def upload_attachment(
     context: InquiryUpdateContext,
     session: SessionDep,
     storage: StorageDep,
+    request: Request,
 ) -> dict[str, Any]:
     inquiry = await _get_inquiry(session, context.tenant_id, inquiry_id)
     data = await _read_upload(file)
@@ -393,6 +437,18 @@ async def upload_attachment(
     try:
         await session.flush()
         await session.refresh(attachment)
+        _record_inquiry_audit(
+            request,
+            context,
+            session,
+            "inquiry.attachment.upload",
+            inquiry.id,
+            {
+                "attachment_id": str(attachment.id),
+                "filename": attachment.filename,
+                "size_bytes": attachment.size_bytes,
+            },
+        )
         await commit_or_rollback(session)
     except Exception:
         try:

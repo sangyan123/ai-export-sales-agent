@@ -661,3 +661,181 @@ async def test_generate_quote_document_rejects_unknown_format(
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+async def test_create_version_copies_approved_quote(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_api(session, "api-version")
+    created = await create_quote(client, seed, quote_no="Q-VER-1")
+    await approve_quote(client, seed, created["id"])
+
+    response = await client.post(
+        f"/api/v1/quotes/{created['id']}/versions",
+        json={"valid_until": "2027-01-31"},
+        headers=seed.requester_headers,
+    )
+
+    assert response.status_code == 201, response.text
+    data = response.json()["data"]
+    assert data["id"] != created["id"]
+    assert data["quote_no"] == "Q-VER-1"
+    assert data["version_no"] == 2
+    assert data["status"] == "DRAFT"
+    assert data["grand_total"] == created["grand_total"]
+    assert data["valid_until"] == "2027-01-31"
+    assert data["created_by"] == str(seed.requester.id)
+    assert len(data["items"]) == 1
+    assert data["items"][0]["product_snapshot"] == created["items"][0]["product_snapshot"]
+    assert data["items"][0]["unit_price"] == created["items"][0]["unit_price"]
+    assert [event["event_type"] for event in data["events"]] == ["CREATED"]
+    assert data["events"][0]["event_payload"]["source_quote_id"] == created["id"]
+    assert data["events"][0]["event_payload"]["source_version_no"] == 1
+
+    versions = await client.get(
+        "/api/v1/quotes",
+        params={"quote_no": "Q-VER-1"},
+        headers=seed.requester_headers,
+    )
+    assert versions.status_code == 200
+    assert versions.json()["meta"]["total"] == 2
+    assert {item["version_no"] for item in versions.json()["data"]} == {1, 2}
+
+
+async def test_create_version_requires_approved_quote(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_api(session, "api-version-draft")
+    created = await create_quote(client, seed)
+
+    response = await client.post(
+        f"/api/v1/quotes/{created['id']}/versions",
+        headers=seed.requester_headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "INVALID_STATUS_TRANSITION"
+
+
+async def test_create_version_rejects_existing_next_version(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_api(session, "api-version-duplicate")
+    created = await create_quote(client, seed, quote_no="Q-VER-DUP")
+    await approve_quote(client, seed, created["id"])
+    first = await client.post(
+        f"/api/v1/quotes/{created['id']}/versions",
+        headers=seed.requester_headers,
+    )
+    assert first.status_code == 201, first.text
+
+    response = await client.post(
+        f"/api/v1/quotes/{created['id']}/versions",
+        headers=seed.requester_headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "QUOTE_VERSION_EXISTS"
+
+
+async def test_create_version_requires_quote_create_permission(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_api(session, "api-version-permission")
+    created = await create_quote(client, seed)
+    await approve_quote(client, seed, created["id"])
+
+    response = await client.post(
+        f"/api/v1/quotes/{created['id']}/versions",
+        headers=seed.approver_headers,
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "PERMISSION_DENIED"
+
+
+async def test_create_version_is_scoped_to_tenant(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed_a = await seed_api(session, "api-version-tenant-a")
+    seed_b = await seed_api(session, "api-version-tenant-b")
+    created = await create_quote(client, seed_a)
+    await approve_quote(client, seed_a, created["id"])
+
+    response = await client.post(
+        f"/api/v1/quotes/{created['id']}/versions",
+        headers=seed_b.requester_headers,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "QUOTE_NOT_FOUND"
+
+
+async def test_quote_mutations_write_audit_log(client: AsyncClient, session: AsyncSession) -> None:
+    seed = await seed_api(session, "api-audit-quote")
+
+    created = await client.post(
+        "/api/v1/quotes",
+        json=quote_payload(seed),
+        headers={**seed.requester_headers, "X-Request-ID": "req_audit_create"},
+    )
+    assert created.status_code == 201, created.text
+    quote_id = created.json()["data"]["id"]
+
+    submitted = await client.post(
+        f"/api/v1/quotes/{quote_id}/submit-approval",
+        headers=seed.requester_headers,
+    )
+    assert submitted.status_code == 200, submitted.text
+
+    response = await client.get(
+        "/api/v1/audit-logs",
+        params={"resource_type": "QUOTE", "resource_id": quote_id},
+        headers=seed.requester_headers,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["meta"]["total"] == 2
+    actions = {entry["action"] for entry in body["data"]}
+    assert actions == {"quote.create", "quote.submit"}
+    create_entry = next(entry for entry in body["data"] if entry["action"] == "quote.create")
+    assert create_entry["actor_id"] == str(seed.requester.id)
+    assert create_entry["request_id"] == "req_audit_create"
+    assert create_entry["ip_hash"] is not None
+    assert create_entry["metadata"]["quote_no"] == created.json()["data"]["quote_no"]
+
+    within_range = await client.get(
+        "/api/v1/audit-logs",
+        params={"created_from": "2000-01-01T00:00:00", "created_to": "2100-01-01T00:00:00"},
+        headers=seed.requester_headers,
+    )
+    assert within_range.status_code == 200, within_range.text
+    assert within_range.json()["meta"]["total"] == 2
+
+    after_range = await client.get(
+        "/api/v1/audit-logs",
+        params={"created_from": "2100-01-01T00:00:00"},
+        headers=seed.requester_headers,
+    )
+    assert after_range.status_code == 200
+    assert after_range.json()["meta"]["total"] == 0
+
+
+async def test_audit_logs_are_scoped_to_tenant_and_permission(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed_a = await seed_api(session, "api-audit-tenant-a")
+    seed_b = await seed_api(session, "api-audit-tenant-b")
+    await create_quote(client, seed_a)
+
+    from_other_tenant = await client.get(
+        "/api/v1/audit-logs",
+        headers=seed_b.requester_headers,
+    )
+    assert from_other_tenant.status_code == 200
+    assert from_other_tenant.json()["meta"]["total"] == 0
+
+    denied = await client.get("/api/v1/audit-logs", headers=seed_a.approver_headers)
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "PERMISSION_DENIED"

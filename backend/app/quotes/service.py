@@ -179,6 +179,111 @@ class QuoteService:
         await self._session.flush()
         return quote
 
+    async def create_version(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        quote_id: uuid.UUID,
+        actor_id: uuid.UUID,
+        valid_until: date | None = None,
+    ) -> Quote:
+        await set_tenant_context(self._session, tenant_id)
+        source = await self._get_quote(tenant_id, quote_id, for_update=True)
+        self._require_status(source, QuoteStatus.APPROVED, QuoteStatus.SENT, QuoteStatus.EXPIRED)
+
+        next_version = source.version_no + 1
+        existing = await self._session.scalar(
+            select(Quote.id).where(
+                Quote.tenant_id == tenant_id,
+                Quote.quote_no == source.quote_no,
+                Quote.version_no == next_version,
+            )
+        )
+        if existing is not None:
+            raise QuoteError(
+                QuoteErrorCode.QUOTE_VERSION_EXISTS,
+                f"quote {source.quote_no} version {next_version} already exists",
+            )
+
+        source_items = list(
+            await self._session.scalars(
+                select(QuoteItem)
+                .where(
+                    QuoteItem.tenant_id == tenant_id,
+                    QuoteItem.quote_id == source.id,
+                )
+                .order_by(QuoteItem.line_no)
+            )
+        )
+        if not source_items:
+            raise QuoteError(QuoteErrorCode.QUOTE_EMPTY, "quote must contain at least one line")
+
+        quote = Quote(
+            tenant_id=tenant_id,
+            inquiry_id=source.inquiry_id,
+            quote_no=source.quote_no,
+            version_no=next_version,
+            status=QuoteStatus.DRAFT.value,
+            currency=source.currency,
+            subtotal=source.subtotal,
+            subtotal_display=source.subtotal_display,
+            discount_total=source.discount_total,
+            discount_total_display=source.discount_total_display,
+            freight_total=source.freight_total,
+            freight_total_display=source.freight_total_display,
+            other_charges=source.other_charges,
+            other_charges_display=source.other_charges_display,
+            grand_total=source.grand_total,
+            grand_total_display=source.grand_total_display,
+            valid_until=valid_until if valid_until is not None else source.valid_until,
+            terms_json=dict(source.terms_json),
+            source_snapshot_json=dict(source.source_snapshot_json),
+            created_by=actor_id,
+        )
+        self._session.add(quote)
+        await self._session.flush()
+
+        self._session.add_all(
+            [
+                QuoteItem(
+                    tenant_id=tenant_id,
+                    quote_id=quote.id,
+                    line_no=item.line_no,
+                    product_id=item.product_id,
+                    product_snapshot_json=dict(item.product_snapshot_json),
+                    quantity=item.quantity,
+                    unit=item.unit,
+                    priced_quantity=item.priced_quantity,
+                    price_unit=item.price_unit,
+                    price_basis=item.price_basis,
+                    unit_price=item.unit_price,
+                    unit_price_display=item.unit_price_display,
+                    line_total=item.line_total,
+                    line_total_display=item.line_total_display,
+                    price_source_ref=dict(item.price_source_ref),
+                )
+                for item in source_items
+            ]
+        )
+        self._add_event(
+            tenant_id=tenant_id,
+            quote_id=quote.id,
+            event_type=QuoteEventType.CREATED,
+            actor_id=actor_id,
+            payload={
+                "quote_no": quote.quote_no,
+                "version_no": quote.version_no,
+                "source_quote_id": str(source.id),
+                "source_version_no": source.version_no,
+                "grand_total": str(quote.grand_total),
+            },
+        )
+        if quote.inquiry_id is not None:
+            inquiry = await self._load_inquiry(tenant_id, quote.inquiry_id)
+            self._apply_inquiry_status(inquiry, InquiryStatus.QUOTE_DRAFTED)
+        await self._session.flush()
+        return quote
+
     async def recalculate(
         self,
         *,

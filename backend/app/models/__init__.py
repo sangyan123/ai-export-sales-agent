@@ -1,3 +1,4 @@
+from app.models.audit import AuditLog
 from app.models.auth import AuthRefreshToken
 from app.models.customer import Customer, CustomerPriceOverride
 from app.models.inquiry import Inquiry, InquiryAttachment, InquiryMessage, InquiryRequirement
@@ -8,6 +9,7 @@ from app.models.tenant import Tenant, TenantMembership, User
 
 __all__ = [
     "ApprovalTask",
+    "AuditLog",
     "AuthRefreshToken",
     "Customer",
     "CustomerPriceOverride",

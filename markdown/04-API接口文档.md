@@ -261,8 +261,9 @@ curl -X POST "$API/api/v1/inquiries/71a1.../attachments" \
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
 | POST | `/quotes` | `quote:create` | 创建报价草案 |
-| GET | `/quotes` | `quote:read` | 报价列表 |
+| GET | `/quotes` | `quote:read` | 报价列表；支持 `status`、`quote_no` 过滤 |
 | GET | `/quotes/{quote_id}` | `quote:read` | 报价详情/快照 |
+| POST | `/quotes/{quote_id}/versions` | `quote:create` | 从已批准/已发送/已过期报价创建下一版本草案 |
 | POST | `/quotes/{quote_id}/recalculate` | `quote:calculate` | 按当前明确指定的价格版本重新计算草案 |
 | POST | `/quotes/{quote_id}/submit-approval` | `quote:submit` | 提交审批 |
 | POST | `/quotes/{quote_id}/approve` | `quote:approve` | 批准 |
@@ -331,6 +332,14 @@ curl -X POST "$API/api/v1/inquiries/71a1.../attachments" \
 
 `POST /quotes/{quote_id}/revise` 仅允许 `REJECTED` 报价回到 `DRAFT`；`POST /quotes/{quote_id}/send` 仅允许 `APPROVED` 报价，成功后状态变为 `SENT` 并联动询盘为 `REPLIED`。`POST /quotes/{quote_id}/expire` 接受 `{"as_of": "2026-11-03"}`，仅在 `valid_until` 已早于 `as_of` 时把 `APPROVED`/`SENT` 报价置为 `EXPIRED`，否则返回 `400 VALIDITY_NOT_REACHED`。
 
+版本创建（仅 `APPROVED`/`SENT`/`EXPIRED` 报价允许）：
+
+```json
+{"valid_until": "2027-01-31"}
+```
+
+服务端在同一事务内复制原报价的币种、金额、贸易条款、来源快照和全部行项目，以相同 `quote_no` 与 `version_no + 1` 生成 `DRAFT`，并写入引用原报价 `source_quote_id`/`source_version_no` 的 `CREATED` 事件。`valid_until` 省略时沿用原报价有效期。新版本必须重新提交审批；若下一版本号已存在返回 `409 QUOTE_VERSION_EXISTS`，源报价状态不允许时返回 `409 INVALID_STATUS_TRANSITION`。可先用 `GET /quotes?quote_no=<quote_no>` 查询同一报价的全部版本。
+
 报价文件生成按需渲染，不落库、也不改变报价状态：
 
 ```bash
@@ -368,6 +377,15 @@ MVP 的邮件可只生成草案、复制文本或下载文件；`send` 接口可
 | GET | `/usage/ai` | `usage:read` | AI 调用量统计 |
 | GET | `/health/live` | Public/Network | 进程存活 |
 | GET | `/health/ready` | Internal | 依赖就绪检查 |
+
+`GET /audit-logs` 仅返回当前租户的日志，支持分页和 `action`、`resource_type`、`resource_id`、`actor_id`、`created_from`、`created_to` 过滤，按时间倒序返回。每条日志包含 `actor_id`、`action`、`resource_type`、`resource_id`、`request_id`、`ip_hash`、`metadata` 和 `created_at`；IP 地址只保存加盐 SHA-256 摘要，不保存明文。
+
+已接入审计的写操作：
+
+| resource_type | action |
+|---|---|
+| `QUOTE` | `quote.create`、`quote.create_version`、`quote.submit`、`quote.approve`、`quote.reject`、`quote.recalculate`、`quote.revise`、`quote.send`、`quote.expire`、`quote.cancel` |
+| `INQUIRY` | `inquiry.create`、`inquiry.update`、`inquiry.attachment.upload` |
 
 ## 10. OpenAPI 规范要求
 

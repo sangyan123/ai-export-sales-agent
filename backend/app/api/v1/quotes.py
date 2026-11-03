@@ -6,7 +6,7 @@ from enum import StrEnum
 from io import BytesIO
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.common import decimal_str, envelope, iso_datetime
 from app.api.deps import RequestContext, SessionDep, require_permission
+from app.audit import AuditService, client_ip_hash
 from app.core.permissions import Permission
 from app.db.session import commit_or_rollback
 from app.db.tenant import set_tenant_context
@@ -82,6 +83,10 @@ class SendQuoteRequest(BaseModel):
 
 class ExpireQuoteRequest(BaseModel):
     as_of: date | None = None
+
+
+class CreateVersionRequest(BaseModel):
+    valid_until: date | None = None
 
 
 class QuoteDocumentFormat(StrEnum):
@@ -224,11 +229,32 @@ def _generate_quote_no() -> str:
     return f"Q-{stamp}-{uuid.uuid4().hex[:8].upper()}"
 
 
+def _record_audit(
+    request: Request,
+    context: RequestContext,
+    session: AsyncSession,
+    action: str,
+    resource_id: uuid.UUID,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    AuditService(session).record(
+        tenant_id=context.tenant_id,
+        actor_id=context.user_id,
+        action=action,
+        resource_type="QUOTE",
+        resource_id=resource_id,
+        request_id=context.request_id,
+        ip_hash=client_ip_hash(request),
+        metadata=metadata,
+    )
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_quote(
     payload: QuoteCreateRequest,
     context: QuoteCreateContext,
     session: SessionDep,
+    request: Request,
 ) -> dict[str, Any]:
     as_of = payload.price_as_of or datetime.now(UTC).date()
     pricing = PricingService.with_default_sources(session)
@@ -257,6 +283,19 @@ async def create_quote(
         source_snapshot=payload.source_snapshot,
         version_no=payload.version_no,
     )
+    _record_audit(
+        request,
+        context,
+        session,
+        "quote.create",
+        quote.id,
+        {
+            "quote_no": quote.quote_no,
+            "version_no": quote.version_no,
+            "grand_total": decimal_str(quote.grand_total),
+            "inquiry_id": str(quote.inquiry_id) if quote.inquiry_id else None,
+        },
+    )
     await commit_or_rollback(session)
     return envelope(await _load_detail(session, context, quote.id), context)
 
@@ -268,11 +307,14 @@ async def list_quotes(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     status_filter: Annotated[QuoteStatus | None, Query(alias="status")] = None,
+    quote_no: Annotated[str | None, Query(max_length=40)] = None,
 ) -> dict[str, Any]:
     await set_tenant_context(session, context.tenant_id)
     conditions = [Quote.tenant_id == context.tenant_id]
     if status_filter is not None:
         conditions.append(Quote.status == status_filter.value)
+    if quote_no is not None:
+        conditions.append(Quote.quote_no == quote_no)
 
     total = await session.scalar(select(func.count()).select_from(Quote).where(*conditions))
     quotes = list(
@@ -307,11 +349,20 @@ async def submit_quote_for_approval(
     quote_id: uuid.UUID,
     context: QuoteSubmitContext,
     session: SessionDep,
+    request: Request,
 ) -> dict[str, Any]:
-    await QuoteService(session).submit_for_approval(
+    task = await QuoteService(session).submit_for_approval(
         tenant_id=context.tenant_id,
         quote_id=quote_id,
         actor_id=context.user_id,
+    )
+    _record_audit(
+        request,
+        context,
+        session,
+        "quote.submit",
+        quote_id,
+        {"approval_task_id": str(task.id)},
     )
     await commit_or_rollback(session)
     return envelope(await _load_detail(session, context, quote_id), context)
@@ -322,14 +373,17 @@ async def approve_quote(
     quote_id: uuid.UUID,
     context: QuoteApproveContext,
     session: SessionDep,
+    request: Request,
     payload: DecisionRequest | None = None,
 ) -> dict[str, Any]:
+    note = payload.decision_note if payload else None
     await QuoteService(session).approve(
         tenant_id=context.tenant_id,
         quote_id=quote_id,
         approver_id=context.user_id,
-        note=payload.decision_note if payload else None,
+        note=note,
     )
+    _record_audit(request, context, session, "quote.approve", quote_id, {"note": note})
     await commit_or_rollback(session)
     return envelope(await _load_detail(session, context, quote_id), context)
 
@@ -339,14 +393,17 @@ async def reject_quote(
     quote_id: uuid.UUID,
     context: QuoteApproveContext,
     session: SessionDep,
+    request: Request,
     payload: DecisionRequest | None = None,
 ) -> dict[str, Any]:
+    note = payload.decision_note if payload else None
     await QuoteService(session).reject(
         tenant_id=context.tenant_id,
         quote_id=quote_id,
         approver_id=context.user_id,
-        note=payload.decision_note if payload else None,
+        note=note,
     )
+    _record_audit(request, context, session, "quote.reject", quote_id, {"note": note})
     await commit_or_rollback(session)
     return envelope(await _load_detail(session, context, quote_id), context)
 
@@ -356,14 +413,17 @@ async def cancel_quote(
     quote_id: uuid.UUID,
     context: QuoteCancelContext,
     session: SessionDep,
+    request: Request,
     payload: CancelQuoteRequest | None = None,
 ) -> dict[str, Any]:
+    note = payload.note if payload else None
     await QuoteService(session).cancel(
         tenant_id=context.tenant_id,
         quote_id=quote_id,
         actor_id=context.user_id,
-        note=payload.note if payload else None,
+        note=note,
     )
+    _record_audit(request, context, session, "quote.cancel", quote_id, {"note": note})
     await commit_or_rollback(session)
     return envelope(await _load_detail(session, context, quote_id), context)
 
@@ -373,14 +433,23 @@ async def recalculate_quote(
     quote_id: uuid.UUID,
     context: QuoteCalculateContext,
     session: SessionDep,
+    request: Request,
     payload: RecalculateQuoteRequest | None = None,
 ) -> dict[str, Any]:
     as_of = (payload.price_as_of if payload else None) or datetime.now(UTC).date()
-    await QuoteService(session).recalculate(
+    quote = await QuoteService(session).recalculate(
         tenant_id=context.tenant_id,
         quote_id=quote_id,
         actor_id=context.user_id,
         as_of=as_of,
+    )
+    _record_audit(
+        request,
+        context,
+        session,
+        "quote.recalculate",
+        quote_id,
+        {"price_as_of": as_of.isoformat(), "grand_total": decimal_str(quote.grand_total)},
     )
     await commit_or_rollback(session)
     return envelope(await _load_detail(session, context, quote_id), context)
@@ -391,12 +460,14 @@ async def revise_quote(
     quote_id: uuid.UUID,
     context: QuoteCreateContext,
     session: SessionDep,
+    request: Request,
 ) -> dict[str, Any]:
     await QuoteService(session).revise(
         tenant_id=context.tenant_id,
         quote_id=quote_id,
         actor_id=context.user_id,
     )
+    _record_audit(request, context, session, "quote.revise", quote_id)
     await commit_or_rollback(session)
     return envelope(await _load_detail(session, context, quote_id), context)
 
@@ -406,14 +477,17 @@ async def send_quote(
     quote_id: uuid.UUID,
     context: QuoteSendContext,
     session: SessionDep,
+    request: Request,
     payload: SendQuoteRequest | None = None,
 ) -> dict[str, Any]:
+    note = payload.note if payload else None
     await QuoteService(session).mark_sent(
         tenant_id=context.tenant_id,
         quote_id=quote_id,
         actor_id=context.user_id,
-        note=payload.note if payload else None,
+        note=note,
     )
+    _record_audit(request, context, session, "quote.send", quote_id, {"note": note})
     await commit_or_rollback(session)
     return envelope(await _load_detail(session, context, quote_id), context)
 
@@ -423,6 +497,7 @@ async def expire_quote(
     quote_id: uuid.UUID,
     context: QuoteExpireContext,
     session: SessionDep,
+    request: Request,
     payload: ExpireQuoteRequest | None = None,
 ) -> dict[str, Any]:
     as_of = (payload.as_of if payload else None) or datetime.now(UTC).date()
@@ -432,8 +507,40 @@ async def expire_quote(
         as_of=as_of,
         actor_id=context.user_id,
     )
+    _record_audit(request, context, session, "quote.expire", quote_id, {"as_of": as_of.isoformat()})
     await commit_or_rollback(session)
     return envelope(await _load_detail(session, context, quote_id), context)
+
+
+@router.post("/{quote_id}/versions", status_code=status.HTTP_201_CREATED)
+async def create_quote_version(
+    quote_id: uuid.UUID,
+    context: QuoteCreateContext,
+    session: SessionDep,
+    request: Request,
+    payload: CreateVersionRequest | None = None,
+) -> dict[str, Any]:
+    version = await QuoteService(session).create_version(
+        tenant_id=context.tenant_id,
+        quote_id=quote_id,
+        actor_id=context.user_id,
+        valid_until=payload.valid_until if payload else None,
+    )
+    _record_audit(
+        request,
+        context,
+        session,
+        "quote.create_version",
+        quote_id,
+        {
+            "new_quote_id": str(version.id),
+            "quote_no": version.quote_no,
+            "source_version_no": version.version_no - 1,
+            "new_version_no": version.version_no,
+        },
+    )
+    await commit_or_rollback(session)
+    return envelope(await _load_detail(session, context, version.id), context)
 
 
 @router.post("/{quote_id}/documents")
