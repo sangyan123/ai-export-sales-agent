@@ -7,6 +7,7 @@ import type {
   ScanStatus,
 } from '@/types/inquiry'
 import type { CatalogStatus, PriceBasis, ProductCategory } from '@/types/product'
+import type { PriceSourceKind, QuoteEventType, QuoteStatus } from '@/types/quote'
 
 export type TagType = 'primary' | 'success' | 'info' | 'warning' | 'danger'
 
@@ -201,4 +202,95 @@ export const SCAN_STATUS_TAG: Record<ScanStatus, TagType> = {
   CLEAN: 'success',
   INFECTED: 'danger',
   FAILED: 'warning',
+}
+
+export const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
+  DRAFT: '草稿',
+  PENDING_APPROVAL: '待审批',
+  APPROVED: '已批准',
+  REJECTED: '已驳回',
+  SENT: '已发送',
+  EXPIRED: '已过期',
+  CANCELLED: '已取消',
+}
+
+export const QUOTE_STATUS_TAG: Record<QuoteStatus, TagType> = {
+  DRAFT: 'primary',
+  PENDING_APPROVAL: 'warning',
+  APPROVED: 'success',
+  REJECTED: 'danger',
+  SENT: 'success',
+  EXPIRED: 'info',
+  CANCELLED: 'info',
+}
+
+export const QUOTE_STATUS_OPTIONS = Object.entries(QUOTE_STATUS_LABELS).map(([value, label]) => ({
+  value: value as QuoteStatus,
+  label,
+}))
+
+export const QUOTE_EVENT_LABELS: Record<QuoteEventType, string> = {
+  CREATED: '创建报价',
+  SUBMITTED: '提交审批',
+  APPROVED: '审批通过',
+  REJECTED: '审批驳回',
+  REVISED: '报价修订',
+  CANCELLED: '取消报价',
+  SENT: '标记已发送',
+  EXPIRED: '标记过期',
+}
+
+export const QUOTE_EVENT_COLOR: Record<QuoteEventType, string> = {
+  CREATED: '#2563eb',
+  SUBMITTED: '#f59e0b',
+  APPROVED: '#16a34a',
+  REJECTED: '#dc2626',
+  REVISED: '#7c3aed',
+  CANCELLED: '#64748b',
+  SENT: '#0ea5e9',
+  EXPIRED: '#94a3b8',
+}
+
+export const PRICE_SOURCE_LABELS: Record<PriceSourceKind, string> = {
+  PRICE_LIST: '价格表',
+  CUSTOMER_OVERRIDE: '客户专属价',
+  CONTRACT: '合同价',
+  MANUAL: '手工价',
+}
+
+export const QUOTE_CURRENCY_OPTIONS = ['USD', 'EUR', 'GBP', 'CNY', 'JPY', 'AUD', 'CAD']
+
+export const QUOTE_TERM_LABELS: Record<string, string> = {
+  incoterm: '贸易条款',
+  payment_terms: '付款方式',
+  lead_time: '交货期',
+  shipping_cost: '运费',
+  remark: '备注',
+  notes: '备注',
+}
+
+export const QUOTE_ERROR_MESSAGES: Record<string, string> = {
+  QUOTE_NOT_FOUND: '报价不存在或已被删除',
+  QUOTE_VERSION_EXISTS: '该报价的下一版本已存在',
+  QUOTE_EMPTY: '报价至少需要一个行项目',
+  INVALID_QUOTE_NO: '报价编号格式不正确',
+  INVALID_STATUS_TRANSITION: '当前报价状态不支持该操作，请刷新后重试',
+  APPROVAL_NOT_FOUND: '未找到待审批记录',
+  APPROVAL_AMBIGUOUS: '存在多条待审批记录，请联系管理员',
+  SELF_APPROVAL_FORBIDDEN: '提交人不能审批自己的报价',
+  VALIDITY_NOT_REACHED: '报价尚未超过有效期，无法标记过期',
+  INQUIRY_NOT_FOUND: '关联询盘不存在',
+  PRODUCT_NOT_FOUND: '产品不存在或已删除',
+  PRODUCT_INACTIVE: '产品已停用，无法报价',
+  PRICE_MISSING: '未找到有效价格，请先维护价格表或调整价格基准日',
+  PRICE_EXPIRED: '所选价格已过期',
+  PRICE_NOT_YET_VALID: '所选价格尚未生效',
+  PRICE_LIST_INACTIVE: '价格表已停用',
+  PRICE_LIST_AMBIGUOUS: '存在多个有效价格表，无法确定价格',
+  CUSTOMER_PRICE_AMBIGUOUS: '客户专属价存在歧义',
+  CURRENCY_MISMATCH: '报价行币种不一致',
+  UNIT_CONVERSION_MISSING: '缺少单位换算规则',
+  NO_ELIGIBLE_TIER: '数量未命中任何价格阶梯',
+  QUANTITY_INVALID: '行项目数量必须大于 0',
+  TIER_AMBIGUOUS: '价格阶梯存在歧义',
 }

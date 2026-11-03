@@ -47,6 +47,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '报价中心', permission: 'quote:read' },
       },
       {
+        path: 'quotes/:id',
+        name: 'quote-detail',
+        component: () => import('@/views/quotes/QuoteDetailView.vue'),
+        meta: { title: '报价详情', permission: 'quote:read', activeMenu: '/quotes' },
+      },
+      {
         path: 'products',
         name: 'products',
         component: () => import('@/views/products/ProductListView.vue'),
