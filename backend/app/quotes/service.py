@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.tenant import set_tenant_context
+from app.models.inquiry import Inquiry
 from app.models.product import Product
 from app.models.quote import ApprovalTask, Quote, QuoteEvent, QuoteItem
 from app.pricing.engine import LineCalculation, PriceSource, QuoteCalculation
@@ -19,6 +20,7 @@ class QuoteErrorCode(StrEnum):
     QUOTE_EMPTY = "QUOTE_EMPTY"
     INVALID_QUOTE_NO = "INVALID_QUOTE_NO"
     PRODUCT_NOT_FOUND = "PRODUCT_NOT_FOUND"
+    INQUIRY_NOT_FOUND = "INQUIRY_NOT_FOUND"
     INVALID_STATUS_TRANSITION = "INVALID_STATUS_TRANSITION"
     APPROVAL_NOT_FOUND = "APPROVAL_NOT_FOUND"
     APPROVAL_AMBIGUOUS = "APPROVAL_AMBIGUOUS"
@@ -111,6 +113,8 @@ class QuoteService:
             tenant_id=tenant_id,
             product_ids={line.product_id for line in calculation.lines},
         )
+        if inquiry_id is not None:
+            await self._require_inquiry(tenant_id, inquiry_id)
 
         quote = Quote(
             tenant_id=tenant_id,
@@ -374,6 +378,19 @@ class QuoteService:
                 "quote has more than one pending approval task",
             )
         return tasks[0]
+
+    async def _require_inquiry(self, tenant_id: uuid.UUID, inquiry_id: uuid.UUID) -> None:
+        exists = await self._session.scalar(
+            select(Inquiry.id).where(
+                Inquiry.tenant_id == tenant_id,
+                Inquiry.id == inquiry_id,
+            )
+        )
+        if exists is None:
+            raise QuoteError(
+                QuoteErrorCode.INQUIRY_NOT_FOUND,
+                "inquiry not found for the tenant",
+            )
 
     async def _load_products(
         self, *, tenant_id: uuid.UUID, product_ids: set[uuid.UUID]

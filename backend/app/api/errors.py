@@ -27,6 +27,7 @@ class ApiError(Exception):
 QUOTE_ERROR_STATUS: dict[QuoteErrorCode, int] = {
     QuoteErrorCode.QUOTE_NOT_FOUND: 404,
     QuoteErrorCode.PRODUCT_NOT_FOUND: 404,
+    QuoteErrorCode.INQUIRY_NOT_FOUND: 404,
     QuoteErrorCode.SELF_APPROVAL_FORBIDDEN: 403,
     QuoteErrorCode.QUOTE_VERSION_EXISTS: 409,
     QuoteErrorCode.INVALID_STATUS_TRANSITION: 409,

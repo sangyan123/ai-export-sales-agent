@@ -168,6 +168,40 @@
 }
 ```
 
+`owner_user_id` 省略时默认为当前用户，`received_at` 省略时默认为服务端当前时间；`customer_id` 和负责人必须属于当前租户。
+
+`PATCH /inquiries/{inquiry_id}` 可更新 `subject`、`customer_id`、`source_type`、`source_ref`、`raw_body`、`language`、`owner_user_id` 和 `status`。状态变更必须符合下表，非法流转返回 `409 INVALID_STATUS_TRANSITION`。
+
+| 当前状态 | 允许流转 |
+|---|---|
+| `RECEIVED` | `PARSING`、`NEEDS_INFO`、`READY_FOR_MATCH`、`ARCHIVED` |
+| `PARSING` | `NEEDS_INFO`、`READY_FOR_MATCH` |
+| `NEEDS_INFO` | `RECEIVED`、`PARSING`、`READY_FOR_MATCH`、`ARCHIVED` |
+| `READY_FOR_MATCH` | `MATCHED`、`NEEDS_INFO` |
+| `MATCHED` | `QUOTE_DRAFTED`、`NEEDS_INFO` |
+| `QUOTE_DRAFTED` | `PENDING_APPROVAL`、`MATCHED` |
+| `PENDING_APPROVAL` | `QUOTE_APPROVED`、`QUOTE_DRAFTED` |
+| `QUOTE_APPROVED` | `REPLIED`、`LOST` |
+| `REPLIED` | `WON`、`LOST`、`QUOTE_DRAFTED` |
+| `WON` / `LOST` | `ARCHIVED` |
+| `ARCHIVED` | 无 |
+
+需求人工确认请求（`PATCH /inquiries/{inquiry_id}/requirements`）：
+
+```json
+{
+  "schema_version": 1,
+  "confirmed": {
+    "material": "SS304",
+    "diameter": "M8",
+    "length": "50mm",
+    "quantity": "5000"
+  }
+}
+```
+
+`schema_version` 省略时为 `1`；同一版本重复提交会覆盖 `confirmed`。`GET` 返回最高 `schema_version` 的记录，尚未生成解析结果时返回 `data: null`。
+
 解析任务响应：
 
 ```json
@@ -228,6 +262,8 @@
   }
 }
 ```
+
+传入 `inquiry_id` 时，服务端会校验该询盘属于当前租户；不存在或跨租户均返回 `404 INQUIRY_NOT_FOUND`。
 
 批准请求：
 

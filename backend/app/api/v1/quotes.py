@@ -38,7 +38,6 @@ class QuoteCreateRequest(BaseModel):
     currency: str = Field(pattern=r"^[A-Za-z]{3}$")
     items: list[QuoteLineCreate] = Field(min_length=1)
     inquiry_id: uuid.UUID | None = None
-    # inquiries are not modelled yet, so the caller may pass the customer explicitly.
     customer_id: uuid.UUID | None = None
     quote_no: str | None = Field(default=None, min_length=1, max_length=40)
     version_no: int = Field(default=1, ge=1)

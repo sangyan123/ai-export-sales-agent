@@ -1,0 +1,329 @@
+import uuid
+from datetime import datetime
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends, Query, status
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.common import envelope, iso_datetime
+from app.api.deps import RequestContext, SessionDep, require_permission
+from app.api.enums import (
+    INQUIRY_STATUS_TRANSITIONS,
+    InquirySourceType,
+    InquiryStatus,
+)
+from app.api.errors import ApiError
+from app.core.permissions import Permission
+from app.db.session import commit_or_rollback
+from app.db.tenant import set_tenant_context
+from app.models.customer import Customer
+from app.models.inquiry import Inquiry, InquiryRequirement
+from app.models.tenant import TenantMembership
+
+router = APIRouter(prefix="/inquiries", tags=["inquiries"])
+
+InquiryReadContext = Annotated[RequestContext, Depends(require_permission(Permission.INQUIRY_READ))]
+InquiryCreateContext = Annotated[
+    RequestContext, Depends(require_permission(Permission.INQUIRY_CREATE))
+]
+InquiryUpdateContext = Annotated[
+    RequestContext, Depends(require_permission(Permission.INQUIRY_UPDATE))
+]
+
+
+class InquiryCreate(BaseModel):
+    customer_id: uuid.UUID
+    subject: str = Field(min_length=1, max_length=240)
+    source_type: InquirySourceType = InquirySourceType.MANUAL
+    source_ref: str | None = Field(default=None, max_length=255)
+    raw_body: str | None = None
+    language: str | None = Field(default=None, max_length=16)
+    owner_user_id: uuid.UUID | None = None
+    received_at: datetime | None = None
+
+    @field_validator("subject")
+    @classmethod
+    def strip_subject(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
+
+
+class InquiryUpdate(BaseModel):
+    customer_id: uuid.UUID | None = None
+    subject: str | None = Field(default=None, min_length=1, max_length=240)
+    source_type: InquirySourceType | None = None
+    source_ref: str | None = Field(default=None, max_length=255)
+    raw_body: str | None = None
+    language: str | None = Field(default=None, max_length=16)
+    owner_user_id: uuid.UUID | None = None
+    status: InquiryStatus | None = None
+
+    @field_validator("subject")
+    @classmethod
+    def strip_subject(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
+
+
+class RequirementUpdate(BaseModel):
+    schema_version: int = Field(default=1, ge=1)
+    confirmed: dict[str, Any] = Field(default_factory=dict)
+
+
+def _inquiry_summary(inquiry: Inquiry) -> dict[str, Any]:
+    return {
+        "id": str(inquiry.id),
+        "customer_id": str(inquiry.customer_id),
+        "subject": inquiry.subject,
+        "source_type": inquiry.source_type,
+        "status": inquiry.status,
+        "owner_user_id": str(inquiry.owner_user_id) if inquiry.owner_user_id else None,
+        "received_at": iso_datetime(inquiry.received_at),
+        "created_at": iso_datetime(inquiry.created_at),
+        "updated_at": iso_datetime(inquiry.updated_at),
+    }
+
+
+def _inquiry_detail(inquiry: Inquiry) -> dict[str, Any]:
+    return {
+        **_inquiry_summary(inquiry),
+        "source_ref": inquiry.source_ref,
+        "raw_body": inquiry.raw_body,
+        "language": inquiry.language,
+    }
+
+
+def _requirement_detail(requirement: InquiryRequirement) -> dict[str, Any]:
+    return {
+        "id": str(requirement.id),
+        "inquiry_id": str(requirement.inquiry_id),
+        "schema_version": requirement.schema_version,
+        "parsed": requirement.parsed_json,
+        "confirmed": requirement.confirmed_json,
+        "confidence": requirement.confidence_json,
+        "evidence": requirement.evidence_json,
+        "model_id": requirement.model_id,
+        "created_at": iso_datetime(requirement.created_at),
+        "updated_at": iso_datetime(requirement.updated_at),
+    }
+
+
+async def _get_inquiry(
+    session: AsyncSession, tenant_id: uuid.UUID, inquiry_id: uuid.UUID
+) -> Inquiry:
+    await set_tenant_context(session, tenant_id)
+    inquiry = await session.scalar(
+        select(Inquiry).where(Inquiry.tenant_id == tenant_id, Inquiry.id == inquiry_id)
+    )
+    if inquiry is None:
+        raise ApiError(404, "INQUIRY_NOT_FOUND", "inquiry not found")
+    return inquiry
+
+
+async def _ensure_customer(
+    session: AsyncSession, tenant_id: uuid.UUID, customer_id: uuid.UUID
+) -> None:
+    exists = await session.scalar(
+        select(Customer.id).where(Customer.tenant_id == tenant_id, Customer.id == customer_id)
+    )
+    if exists is None:
+        raise ApiError(404, "CUSTOMER_NOT_FOUND", "customer not found")
+
+
+async def _ensure_owner_member(
+    session: AsyncSession, tenant_id: uuid.UUID, user_id: uuid.UUID | None
+) -> None:
+    if user_id is None:
+        return
+    membership_id = await session.scalar(
+        select(TenantMembership.id).where(
+            TenantMembership.tenant_id == tenant_id,
+            TenantMembership.user_id == user_id,
+            TenantMembership.status == "ACTIVE",
+        )
+    )
+    if membership_id is None:
+        raise ApiError(400, "OWNER_NOT_MEMBER", "owner is not an active tenant member")
+
+
+def _ensure_status_transition(inquiry: Inquiry, target: InquiryStatus) -> None:
+    if target.value == inquiry.status:
+        return
+    allowed = INQUIRY_STATUS_TRANSITIONS[InquiryStatus(inquiry.status)]
+    if target not in allowed:
+        raise ApiError(
+            409,
+            "INVALID_STATUS_TRANSITION",
+            f"inquiry status {inquiry.status} cannot move to {target.value}",
+        )
+
+
+@router.get("")
+async def list_inquiries(
+    context: InquiryReadContext,
+    session: SessionDep,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    status_filter: Annotated[InquiryStatus | None, Query(alias="status")] = None,
+    customer_id: uuid.UUID | None = None,
+    owner_user_id: uuid.UUID | None = None,
+    q: Annotated[str | None, Query(max_length=120)] = None,
+) -> dict[str, Any]:
+    await set_tenant_context(session, context.tenant_id)
+    conditions = [Inquiry.tenant_id == context.tenant_id]
+    if status_filter is not None:
+        conditions.append(Inquiry.status == status_filter.value)
+    if customer_id is not None:
+        conditions.append(Inquiry.customer_id == customer_id)
+    if owner_user_id is not None:
+        conditions.append(Inquiry.owner_user_id == owner_user_id)
+    if q:
+        pattern = f"%{q.strip()}%"
+        conditions.append(or_(Inquiry.subject.ilike(pattern), Inquiry.raw_body.ilike(pattern)))
+
+    total = await session.scalar(select(func.count()).select_from(Inquiry).where(*conditions))
+    inquiries = list(
+        await session.scalars(
+            select(Inquiry)
+            .where(*conditions)
+            .order_by(Inquiry.received_at.desc(), Inquiry.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    )
+    return envelope(
+        [_inquiry_summary(inquiry) for inquiry in inquiries],
+        context,
+        page=page,
+        page_size=page_size,
+        total=int(total or 0),
+    )
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_inquiry(
+    payload: InquiryCreate,
+    context: InquiryCreateContext,
+    session: SessionDep,
+) -> dict[str, Any]:
+    await set_tenant_context(session, context.tenant_id)
+    await _ensure_customer(session, context.tenant_id, payload.customer_id)
+    owner_user_id = payload.owner_user_id or context.user_id
+    await _ensure_owner_member(session, context.tenant_id, owner_user_id)
+
+    inquiry = Inquiry(
+        tenant_id=context.tenant_id,
+        customer_id=payload.customer_id,
+        subject=payload.subject,
+        source_type=payload.source_type.value,
+        source_ref=payload.source_ref,
+        raw_body=payload.raw_body,
+        language=payload.language,
+        status=InquiryStatus.RECEIVED.value,
+        owner_user_id=owner_user_id,
+    )
+    if payload.received_at is not None:
+        inquiry.received_at = payload.received_at
+    session.add(inquiry)
+    await session.flush()
+    await session.refresh(inquiry)
+    await commit_or_rollback(session)
+    return envelope(_inquiry_detail(inquiry), context)
+
+
+@router.get("/{inquiry_id}")
+async def get_inquiry(
+    inquiry_id: uuid.UUID,
+    context: InquiryReadContext,
+    session: SessionDep,
+) -> dict[str, Any]:
+    inquiry = await _get_inquiry(session, context.tenant_id, inquiry_id)
+    return envelope(_inquiry_detail(inquiry), context)
+
+
+@router.patch("/{inquiry_id}")
+async def update_inquiry(
+    inquiry_id: uuid.UUID,
+    payload: InquiryUpdate,
+    context: InquiryUpdateContext,
+    session: SessionDep,
+) -> dict[str, Any]:
+    inquiry = await _get_inquiry(session, context.tenant_id, inquiry_id)
+    data = payload.model_dump(exclude_unset=True)
+
+    for field in ("customer_id", "subject", "source_type", "status"):
+        if field in data and data[field] is None:
+            raise ApiError(422, "VALIDATION_ERROR", f"{field} cannot be null")
+
+    if "customer_id" in data:
+        await _ensure_customer(session, context.tenant_id, data["customer_id"])
+    if "owner_user_id" in data:
+        await _ensure_owner_member(session, context.tenant_id, data["owner_user_id"])
+    if "source_type" in data:
+        data["source_type"] = payload.source_type.value
+    if "status" in data:
+        _ensure_status_transition(inquiry, payload.status)
+        data["status"] = payload.status.value
+
+    for field, value in data.items():
+        setattr(inquiry, field, value)
+    await session.flush()
+    await session.refresh(inquiry)
+    await commit_or_rollback(session)
+    return envelope(_inquiry_detail(inquiry), context)
+
+
+@router.get("/{inquiry_id}/requirements")
+async def get_requirements(
+    inquiry_id: uuid.UUID,
+    context: InquiryReadContext,
+    session: SessionDep,
+) -> dict[str, Any]:
+    await _get_inquiry(session, context.tenant_id, inquiry_id)
+    requirement = await session.scalar(
+        select(InquiryRequirement)
+        .where(
+            InquiryRequirement.tenant_id == context.tenant_id,
+            InquiryRequirement.inquiry_id == inquiry_id,
+        )
+        .order_by(InquiryRequirement.schema_version.desc())
+        .limit(1)
+    )
+    return envelope(_requirement_detail(requirement) if requirement else None, context)
+
+
+@router.patch("/{inquiry_id}/requirements")
+async def update_requirements(
+    inquiry_id: uuid.UUID,
+    payload: RequirementUpdate,
+    context: InquiryUpdateContext,
+    session: SessionDep,
+) -> dict[str, Any]:
+    await _get_inquiry(session, context.tenant_id, inquiry_id)
+    requirement = await session.scalar(
+        select(InquiryRequirement).where(
+            InquiryRequirement.tenant_id == context.tenant_id,
+            InquiryRequirement.inquiry_id == inquiry_id,
+            InquiryRequirement.schema_version == payload.schema_version,
+        )
+    )
+    if requirement is None:
+        requirement = InquiryRequirement(
+            tenant_id=context.tenant_id,
+            inquiry_id=inquiry_id,
+            schema_version=payload.schema_version,
+        )
+        session.add(requirement)
+    requirement.confirmed_json = payload.confirmed
+    await session.flush()
+    await session.refresh(requirement)
+    await commit_or_rollback(session)
+    return envelope(_requirement_detail(requirement), context)

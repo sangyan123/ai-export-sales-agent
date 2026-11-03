@@ -51,6 +51,12 @@ class Quote(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
             "grand_total = subtotal - discount_total + freight_total + other_charges",
             name="grand_total_formula",
         ),
+        ForeignKeyConstraint(
+            ["tenant_id", "inquiry_id"],
+            ["inquiries.tenant_id", "inquiries.id"],
+            name="fk_quotes_tenant_inquiry",
+            ondelete="RESTRICT",
+        ),
         Index(
             "ix_quotes_tenant_status_created",
             "tenant_id",
@@ -60,7 +66,6 @@ class Quote(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
         Index("ix_quotes_tenant_quote_no", "tenant_id", "quote_no"),
     )
 
-    # inquiries table arrives in a later migration; FK added there.
     inquiry_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     quote_no: Mapped[str] = mapped_column(String(40), nullable=False)
     version_no: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
