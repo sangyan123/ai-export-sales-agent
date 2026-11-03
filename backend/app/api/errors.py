@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.inquiries.analysis import AnalysisError, AnalysisErrorCode
 from app.pricing import PricingError, PricingErrorCode
 from app.quotes import QuoteError, QuoteErrorCode
 from app.workflows import WorkflowError, WorkflowErrorCode
@@ -46,6 +47,13 @@ PRICING_ERROR_STATUS: dict[PricingErrorCode, int] = {
 WORKFLOW_ERROR_STATUS: dict[WorkflowErrorCode, int] = {
     WorkflowErrorCode.WORKFLOW_RUN_NOT_FOUND: 404,
     WorkflowErrorCode.INVALID_WORKFLOW_STATUS: 409,
+}
+
+ANALYSIS_ERROR_STATUS: dict[AnalysisErrorCode, int] = {
+    AnalysisErrorCode.INQUIRY_NOT_FOUND: 404,
+    AnalysisErrorCode.ANALYSIS_RUN_NOT_FOUND: 404,
+    AnalysisErrorCode.INQUIRY_STATUS_NOT_ANALYZABLE: 409,
+    AnalysisErrorCode.INQUIRY_ANALYSIS_IN_PROGRESS: 409,
 }
 
 
@@ -114,6 +122,15 @@ async def workflow_error_handler(request: Request, exc: WorkflowError) -> JSONRe
     )
 
 
+async def analysis_error_handler(request: Request, exc: AnalysisError) -> JSONResponse:
+    return _error_response(
+        request,
+        status_code=ANALYSIS_ERROR_STATUS.get(exc.code, 400),
+        code=exc.code.value,
+        message=exc.message,
+    )
+
+
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     details = [
         {
@@ -136,4 +153,5 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(QuoteError, quote_error_handler)
     app.add_exception_handler(PricingError, pricing_error_handler)
     app.add_exception_handler(WorkflowError, workflow_error_handler)
+    app.add_exception_handler(AnalysisError, analysis_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)

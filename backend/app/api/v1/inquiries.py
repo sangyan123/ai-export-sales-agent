@@ -6,7 +6,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +33,7 @@ from app.inquiries import (
     InquiryStatus,
     can_transition,
 )
+from app.inquiries.analysis import InquiryAnalysisService, run_inquiry_analysis
 from app.models.customer import Customer
 from app.models.inquiry import Inquiry, InquiryAttachment, InquiryRequirement
 from app.models.tenant import TenantMembership
@@ -40,6 +50,7 @@ InquiryCreateContext = Annotated[
 InquiryUpdateContext = Annotated[
     RequestContext, Depends(require_permission(Permission.INQUIRY_UPDATE))
 ]
+InquiryAnalysisContext = Annotated[RequestContext, Depends(require_permission(Permission.AI_RUN))]
 StorageDep = Annotated[ObjectStorage, Depends(get_storage)]
 
 
@@ -457,6 +468,44 @@ async def upload_attachment(
             logger.warning("failed to clean up orphaned object %s: %s", object_key, exc)
         raise
     return envelope(_attachment_detail(attachment), context)
+
+
+@router.post("/{inquiry_id}/analysis", status_code=status.HTTP_202_ACCEPTED)
+async def create_analysis(
+    inquiry_id: uuid.UUID,
+    context: InquiryAnalysisContext,
+    session: SessionDep,
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> dict[str, Any]:
+    run = await InquiryAnalysisService(session).enqueue(
+        tenant_id=context.tenant_id,
+        inquiry_id=inquiry_id,
+        requested_by=context.user_id,
+        request_id=context.request_id,
+    )
+    _record_inquiry_audit(
+        request,
+        context,
+        session,
+        "inquiry.analysis.request",
+        inquiry_id,
+        {"workflow_run_id": str(run.id)},
+    )
+    await commit_or_rollback(session)
+    background_tasks.add_task(
+        run_inquiry_analysis,
+        tenant_id=context.tenant_id,
+        run_id=run.id,
+    )
+    return envelope(
+        {
+            "workflow_run_id": str(run.id),
+            "status": run.status,
+            "inquiry_id": str(inquiry_id),
+        },
+        context,
+    )
 
 
 @router.get("/{inquiry_id}/requirements")

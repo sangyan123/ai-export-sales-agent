@@ -241,6 +241,8 @@ curl -X POST "$API/api/v1/inquiries/71a1.../attachments" \
 }
 ```
 
+`POST /inquiries/{inquiry_id}/analysis` 返回 `202`，仅允许 `RECEIVED`、`NEEDS_INFO` 状态发起；发起后询盘进入 `PARSING`，并返回 `QUEUED` 的异步任务。存在未结束的解析任务时返回 `409 INQUIRY_ANALYSIS_IN_PROGRESS`，其他状态返回 `409 INQUIRY_STATUS_NOT_ANALYZABLE`，跨租户或不存在的询盘返回 `404 INQUIRY_NOT_FOUND`。Worker 成功后写入新的 `inquiry_requirements` 版本（`schema_version` 递增，`confirmed` 不覆盖），关键字段完整时询盘进入 `READY_FOR_MATCH`，否则进入 `NEEDS_INFO`；解析失败或任务取消时任务进入终态，询盘回到 `NEEDS_INFO`。可通过 `GET /workflow-runs/{run_id}` 轮询任务状态。
+
 解析结果示例：
 
 ```json
@@ -406,7 +408,7 @@ MVP 的邮件可只生成草案、复制文本或下载文件；`send` 接口可
 | resource_type | action |
 |---|---|
 | `QUOTE` | `quote.create`、`quote.create_version`、`quote.submit`、`quote.approve`、`quote.reject`、`quote.recalculate`、`quote.revise`、`quote.send`、`quote.expire`、`quote.cancel` |
-| `INQUIRY` | `inquiry.create`、`inquiry.update`、`inquiry.attachment.upload` |
+| `INQUIRY` | `inquiry.create`、`inquiry.update`、`inquiry.attachment.upload`、`inquiry.analysis.request`、`inquiry.analysis.completed`、`inquiry.analysis.failed` |
 | `WORKFLOW_RUN` | `workflow.cancel` |
 
 ## 10. OpenAPI 规范要求

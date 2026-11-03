@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     llm_provider: str | None = None
     llm_api_key: str | None = None
     llm_base_url: str | None = None
+    llm_model: str = "gpt-4o-mini"
+    llm_timeout_seconds: float = 30.0
+    llm_max_input_chars: int = 20000
     embedding_model: str | None = None
     sentry_dsn: str | None = None
 
