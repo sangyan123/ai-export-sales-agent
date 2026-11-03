@@ -19,6 +19,7 @@ class Permission(StrEnum):
     AI_RUN = "ai:run"
     QUOTE_CREATE = "quote:create"
     QUOTE_READ = "quote:read"
+    QUOTE_CALCULATE = "quote:calculate"
     QUOTE_SUBMIT = "quote:submit"
     QUOTE_APPROVE = "quote:approve"
     QUOTE_CANCEL = "quote:cancel"
@@ -50,6 +51,7 @@ _SALES_REP = _READ_ONLY | frozenset(
         Permission.INQUIRY_UPDATE,
         Permission.AI_RUN,
         Permission.QUOTE_CREATE,
+        Permission.QUOTE_CALCULATE,
         Permission.QUOTE_SUBMIT,
         Permission.QUOTE_CANCEL,
         Permission.EMAIL_DRAFT,

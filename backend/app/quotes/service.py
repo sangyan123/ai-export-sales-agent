@@ -1,6 +1,7 @@
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
@@ -12,6 +13,7 @@ from app.inquiries import InquiryStatus, can_transition
 from app.models.inquiry import Inquiry
 from app.models.product import Product
 from app.models.quote import ApprovalTask, Quote, QuoteEvent, QuoteItem
+from app.pricing import PricingService, calculate_quote
 from app.pricing.engine import LineCalculation, PriceSource, QuoteCalculation
 
 
@@ -66,6 +68,11 @@ class ApprovalStatus(StrEnum):
 
 APPROVAL_OBJECT_TYPE = "QUOTE"
 QUOTE_APPROVAL_TYPE = "QUOTE_APPROVAL"
+_MONEY_QUANTUM = Decimal("0.0001")
+
+
+def _money(value: Decimal) -> Decimal:
+    return value.quantize(_MONEY_QUANTUM)
 
 
 class QuoteService:
@@ -125,15 +132,15 @@ class QuoteService:
             version_no=version_no,
             status=QuoteStatus.DRAFT.value,
             currency=calculation.currency.upper(),
-            subtotal=calculation.subtotal,
+            subtotal=_money(calculation.subtotal),
             subtotal_display=calculation.subtotal_display,
-            discount_total=calculation.discount_total,
+            discount_total=_money(calculation.discount_total),
             discount_total_display=calculation.discount_total_display,
-            freight_total=calculation.freight_total,
+            freight_total=_money(calculation.freight_total),
             freight_total_display=calculation.freight_total_display,
-            other_charges=calculation.other_charges,
+            other_charges=_money(calculation.other_charges),
             other_charges_display=calculation.other_charges_display,
-            grand_total=calculation.grand_total,
+            grand_total=_money(calculation.grand_total),
             grand_total_display=calculation.grand_total_display,
             valid_until=valid_until,
             terms_json=dict(terms or {}),
@@ -169,6 +176,97 @@ class QuoteService:
         )
         if inquiry is not None:
             self._apply_inquiry_status(inquiry, InquiryStatus.QUOTE_DRAFTED)
+        await self._session.flush()
+        return quote
+
+    async def recalculate(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        quote_id: uuid.UUID,
+        actor_id: uuid.UUID,
+        as_of: date,
+    ) -> Quote:
+        await set_tenant_context(self._session, tenant_id)
+        quote = await self._get_quote(tenant_id, quote_id, for_update=True)
+        self._require_status(quote, QuoteStatus.DRAFT)
+
+        items = list(
+            await self._session.scalars(
+                select(QuoteItem)
+                .where(
+                    QuoteItem.tenant_id == tenant_id,
+                    QuoteItem.quote_id == quote.id,
+                )
+                .order_by(QuoteItem.line_no)
+            )
+        )
+        if not items:
+            raise QuoteError(QuoteErrorCode.QUOTE_EMPTY, "quote must contain at least one line")
+        if any(item.product_id is None for item in items):
+            raise QuoteError(
+                QuoteErrorCode.PRODUCT_NOT_FOUND,
+                "quote has lines without a product and cannot be repriced",
+            )
+
+        customer_id: uuid.UUID | None = None
+        if quote.inquiry_id is not None:
+            customer_id = await self._session.scalar(
+                select(Inquiry.customer_id).where(
+                    Inquiry.tenant_id == tenant_id,
+                    Inquiry.id == quote.inquiry_id,
+                )
+            )
+
+        pricing = PricingService.with_default_sources(self._session)
+        lines = [
+            await pricing.calculate_line(
+                tenant_id=tenant_id,
+                product_id=item.product_id,
+                quantity=item.quantity,
+                unit=item.unit,
+                currency=quote.currency,
+                as_of=as_of,
+                customer_id=customer_id,
+            )
+            for item in items
+        ]
+        calculation = calculate_quote(
+            lines,
+            discount_total=quote.discount_total,
+            freight_total=quote.freight_total,
+            other_charges=quote.other_charges,
+        )
+        products = await self._load_products(
+            tenant_id=tenant_id,
+            product_ids={item.product_id for item in items},
+        )
+        for item, line in zip(items, calculation.lines, strict=True):
+            item.product_snapshot_json = _product_snapshot(products[item.product_id])
+            item.priced_quantity = line.priced_quantity
+            item.price_unit = line.price_unit
+            item.price_basis = line.price_basis
+            item.unit_price = _money(line.unit_price)
+            item.unit_price_display = line.unit_price_display
+            item.line_total = _money(line.line_total)
+            item.line_total_display = line.line_total_display
+            item.price_source_ref = _price_source_ref(line.source)
+
+        quote.subtotal = _money(calculation.subtotal)
+        quote.subtotal_display = calculation.subtotal_display
+        quote.grand_total = _money(calculation.grand_total)
+        quote.grand_total_display = calculation.grand_total_display
+        self._add_event(
+            tenant_id=tenant_id,
+            quote_id=quote.id,
+            event_type=QuoteEventType.REVISED,
+            actor_id=actor_id,
+            payload={
+                "action": "recalculate",
+                "price_as_of": as_of.isoformat(),
+                "grand_total": str(_money(calculation.grand_total)),
+            },
+        )
         await self._session.flush()
         return quote
 
@@ -309,7 +407,12 @@ class QuoteService:
         return quote
 
     async def mark_sent(
-        self, *, tenant_id: uuid.UUID, quote_id: uuid.UUID, actor_id: uuid.UUID
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        quote_id: uuid.UUID,
+        actor_id: uuid.UUID,
+        note: str | None = None,
     ) -> Quote:
         await set_tenant_context(self._session, tenant_id)
         quote = await self._get_quote(tenant_id, quote_id, for_update=True)
@@ -320,12 +423,20 @@ class QuoteService:
             quote_id=quote.id,
             event_type=QuoteEventType.SENT,
             actor_id=actor_id,
+            payload={"note": note} if note else None,
         )
         await self._advance_inquiry(tenant_id, quote.inquiry_id, InquiryStatus.REPLIED)
         await self._session.flush()
         return quote
 
-    async def expire(self, *, tenant_id: uuid.UUID, quote_id: uuid.UUID, as_of: date) -> Quote:
+    async def expire(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        quote_id: uuid.UUID,
+        as_of: date,
+        actor_id: uuid.UUID | None = None,
+    ) -> Quote:
         await set_tenant_context(self._session, tenant_id)
         quote = await self._get_quote(tenant_id, quote_id, for_update=True)
         self._require_status(quote, QuoteStatus.APPROVED, QuoteStatus.SENT)
@@ -339,7 +450,7 @@ class QuoteService:
             tenant_id=tenant_id,
             quote_id=quote.id,
             event_type=QuoteEventType.EXPIRED,
-            actor_id=None,
+            actor_id=actor_id,
             payload={"as_of": as_of.isoformat()},
         )
         await self._session.flush()
@@ -459,9 +570,9 @@ class QuoteService:
             priced_quantity=line.priced_quantity,
             price_unit=line.price_unit,
             price_basis=line.price_basis,
-            unit_price=line.unit_price,
+            unit_price=_money(line.unit_price),
             unit_price_display=line.unit_price_display,
-            line_total=line.line_total,
+            line_total=_money(line.line_total),
             line_total_display=line.line_total_display,
             price_source_ref=_price_source_ref(line.source),
         )

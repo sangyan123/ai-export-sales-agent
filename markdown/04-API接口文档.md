@@ -263,10 +263,13 @@ curl -X POST "$API/api/v1/inquiries/71a1.../attachments" \
 | POST | `/quotes` | `quote:create` | 创建报价草案 |
 | GET | `/quotes` | `quote:read` | 报价列表 |
 | GET | `/quotes/{quote_id}` | `quote:read` | 报价详情/快照 |
-| POST | `/quotes/{quote_id}/recalculate` | `quote:calculate` | 按当前明确指定的价格版本重新计算 |
+| POST | `/quotes/{quote_id}/recalculate` | `quote:calculate` | 按当前明确指定的价格版本重新计算草案 |
 | POST | `/quotes/{quote_id}/submit-approval` | `quote:submit` | 提交审批 |
 | POST | `/quotes/{quote_id}/approve` | `quote:approve` | 批准 |
 | POST | `/quotes/{quote_id}/reject` | `quote:approve` | 驳回/要求修改 |
+| POST | `/quotes/{quote_id}/revise` | `quote:create` | 驳回后重新打开为草案 |
+| POST | `/quotes/{quote_id}/send` | `quote:submit` | 人工确认已发送 |
+| POST | `/quotes/{quote_id}/expire` | `quote:cancel` | 有效期结束后标记过期 |
 | POST | `/quotes/{quote_id}/documents` | `quote:read` | 生成 PDF/XLSX 报价文件 |
 | POST | `/quotes/{quote_id}/cancel` | `quote:cancel` | 取消报价 |
 
@@ -311,6 +314,32 @@ curl -X POST "$API/api/v1/inquiries/71a1.../attachments" \
 ```
 
 后端必须再次检查报价状态、审批人权限、价格底线、价格有效期、必需规格和关联租户，不得仅依据前端按钮是否可用。
+
+重算请求（仅 `DRAFT` 状态允许，`price_as_of` 省略时按当天）：
+
+```json
+{"price_as_of": "2026-11-03"}
+```
+
+重算会按当前有效价格来源重新计算所有行项目，保留既有折扣、运费和其他费用，并写入 `REVISED` 事件（`event_payload.action = "recalculate"`）。已批准的报价不得重算，必须新建版本并重新审批。
+
+重新打开与发送：
+
+```json
+{"note": "emailed to buyer"}
+```
+
+`POST /quotes/{quote_id}/revise` 仅允许 `REJECTED` 报价回到 `DRAFT`；`POST /quotes/{quote_id}/send` 仅允许 `APPROVED` 报价，成功后状态变为 `SENT` 并联动询盘为 `REPLIED`。`POST /quotes/{quote_id}/expire` 接受 `{"as_of": "2026-11-03"}`，仅在 `valid_until` 已早于 `as_of` 时把 `APPROVED`/`SENT` 报价置为 `EXPIRED`，否则返回 `400 VALIDITY_NOT_REACHED`。
+
+报价文件生成按需渲染，不落库、也不改变报价状态：
+
+```bash
+curl -X POST "$API/api/v1/quotes/{quote_id}/documents?format=PDF" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -o quotation.pdf
+```
+
+`format` 支持 `PDF`（默认）和 `XLSX`，响应为对应二进制文件，携带 `Content-Disposition: attachment; filename="<quote_no>-v<version>.<ext>"`。生成文件不等同于发送，不能据此把报价标记为 `SENT`。
 
 ## 8. 客户、邮件草案与跟进接口
 

@@ -1,9 +1,13 @@
+import re
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from enum import StrEnum
+from io import BytesIO
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,9 +17,12 @@ from app.api.deps import RequestContext, SessionDep, require_permission
 from app.core.permissions import Permission
 from app.db.session import commit_or_rollback
 from app.db.tenant import set_tenant_context
+from app.models.customer import Customer
+from app.models.inquiry import Inquiry
 from app.models.quote import Quote, QuoteEvent, QuoteItem
 from app.pricing import PricingService, calculate_quote
 from app.quotes import QuoteError, QuoteErrorCode, QuoteService, QuoteStatus
+from app.quotes.documents import render_quote_pdf, render_quote_xlsx
 
 router = APIRouter(prefix="/quotes", tags=["quotes"])
 
@@ -26,6 +33,11 @@ QuoteApproveContext = Annotated[
     RequestContext, Depends(require_permission(Permission.QUOTE_APPROVE))
 ]
 QuoteCancelContext = Annotated[RequestContext, Depends(require_permission(Permission.QUOTE_CANCEL))]
+QuoteCalculateContext = Annotated[
+    RequestContext, Depends(require_permission(Permission.QUOTE_CALCULATE))
+]
+QuoteSendContext = Annotated[RequestContext, Depends(require_permission(Permission.QUOTE_SUBMIT))]
+QuoteExpireContext = Annotated[RequestContext, Depends(require_permission(Permission.QUOTE_CANCEL))]
 
 
 class QuoteLineCreate(BaseModel):
@@ -58,6 +70,23 @@ class DecisionRequest(BaseModel):
 
 class CancelQuoteRequest(BaseModel):
     note: str | None = Field(default=None, max_length=4000)
+
+
+class RecalculateQuoteRequest(BaseModel):
+    price_as_of: date | None = None
+
+
+class SendQuoteRequest(BaseModel):
+    note: str | None = Field(default=None, max_length=4000)
+
+
+class ExpireQuoteRequest(BaseModel):
+    as_of: date | None = None
+
+
+class QuoteDocumentFormat(StrEnum):
+    PDF = "PDF"
+    XLSX = "XLSX"
 
 
 def _quote_summary(quote: Quote) -> dict[str, Any]:
@@ -135,22 +164,48 @@ async def _get_quote(session: AsyncSession, tenant_id: uuid.UUID, quote_id: uuid
     return quote
 
 
+async def _load_items(
+    session: AsyncSession, tenant_id: uuid.UUID, quote_id: uuid.UUID
+) -> list[QuoteItem]:
+    return list(
+        await session.scalars(
+            select(QuoteItem)
+            .where(
+                QuoteItem.tenant_id == tenant_id,
+                QuoteItem.quote_id == quote_id,
+            )
+            .order_by(QuoteItem.line_no)
+        )
+    )
+
+
+async def _load_customer_name(
+    session: AsyncSession, tenant_id: uuid.UUID, inquiry_id: uuid.UUID | None
+) -> str | None:
+    if inquiry_id is None:
+        return None
+    return await session.scalar(
+        select(Customer.company_name)
+        .join(
+            Inquiry,
+            (Inquiry.tenant_id == Customer.tenant_id) & (Inquiry.customer_id == Customer.id),
+        )
+        .where(Inquiry.tenant_id == tenant_id, Inquiry.id == inquiry_id)
+    )
+
+
+def _document_filename(quote: Quote, extension: str) -> str:
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", quote.quote_no).strip("._") or "quote"
+    return f"{stem}-v{quote.version_no}.{extension}"
+
+
 async def _load_detail(
     session: AsyncSession,
     context: RequestContext,
     quote_id: uuid.UUID,
 ) -> dict[str, Any]:
     quote = await _get_quote(session, context.tenant_id, quote_id)
-    items = list(
-        await session.scalars(
-            select(QuoteItem)
-            .where(
-                QuoteItem.tenant_id == context.tenant_id,
-                QuoteItem.quote_id == quote.id,
-            )
-            .order_by(QuoteItem.line_no)
-        )
-    )
+    items = await _load_items(session, context.tenant_id, quote.id)
     events = list(
         await session.scalars(
             select(QuoteEvent)
@@ -311,3 +366,99 @@ async def cancel_quote(
     )
     await commit_or_rollback(session)
     return envelope(await _load_detail(session, context, quote_id), context)
+
+
+@router.post("/{quote_id}/recalculate")
+async def recalculate_quote(
+    quote_id: uuid.UUID,
+    context: QuoteCalculateContext,
+    session: SessionDep,
+    payload: RecalculateQuoteRequest | None = None,
+) -> dict[str, Any]:
+    as_of = (payload.price_as_of if payload else None) or datetime.now(UTC).date()
+    await QuoteService(session).recalculate(
+        tenant_id=context.tenant_id,
+        quote_id=quote_id,
+        actor_id=context.user_id,
+        as_of=as_of,
+    )
+    await commit_or_rollback(session)
+    return envelope(await _load_detail(session, context, quote_id), context)
+
+
+@router.post("/{quote_id}/revise")
+async def revise_quote(
+    quote_id: uuid.UUID,
+    context: QuoteCreateContext,
+    session: SessionDep,
+) -> dict[str, Any]:
+    await QuoteService(session).revise(
+        tenant_id=context.tenant_id,
+        quote_id=quote_id,
+        actor_id=context.user_id,
+    )
+    await commit_or_rollback(session)
+    return envelope(await _load_detail(session, context, quote_id), context)
+
+
+@router.post("/{quote_id}/send")
+async def send_quote(
+    quote_id: uuid.UUID,
+    context: QuoteSendContext,
+    session: SessionDep,
+    payload: SendQuoteRequest | None = None,
+) -> dict[str, Any]:
+    await QuoteService(session).mark_sent(
+        tenant_id=context.tenant_id,
+        quote_id=quote_id,
+        actor_id=context.user_id,
+        note=payload.note if payload else None,
+    )
+    await commit_or_rollback(session)
+    return envelope(await _load_detail(session, context, quote_id), context)
+
+
+@router.post("/{quote_id}/expire")
+async def expire_quote(
+    quote_id: uuid.UUID,
+    context: QuoteExpireContext,
+    session: SessionDep,
+    payload: ExpireQuoteRequest | None = None,
+) -> dict[str, Any]:
+    as_of = (payload.as_of if payload else None) or datetime.now(UTC).date()
+    await QuoteService(session).expire(
+        tenant_id=context.tenant_id,
+        quote_id=quote_id,
+        as_of=as_of,
+        actor_id=context.user_id,
+    )
+    await commit_or_rollback(session)
+    return envelope(await _load_detail(session, context, quote_id), context)
+
+
+@router.post("/{quote_id}/documents")
+async def generate_quote_document(
+    quote_id: uuid.UUID,
+    context: QuoteReadContext,
+    session: SessionDep,
+    format: Annotated[QuoteDocumentFormat, Query()] = QuoteDocumentFormat.PDF,
+) -> StreamingResponse:
+    quote = await _get_quote(session, context.tenant_id, quote_id)
+    items = await _load_items(session, context.tenant_id, quote.id)
+    customer_name = await _load_customer_name(session, context.tenant_id, quote.inquiry_id)
+
+    if format is QuoteDocumentFormat.PDF:
+        payload = render_quote_pdf(quote=quote, items=items, customer_name=customer_name)
+        media_type = "application/pdf"
+        extension = "pdf"
+    else:
+        payload = render_quote_xlsx(quote=quote, items=items, customer_name=customer_name)
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        extension = "xlsx"
+
+    filename = _document_filename(quote, extension)
+    return StreamingResponse(
+        BytesIO(payload),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

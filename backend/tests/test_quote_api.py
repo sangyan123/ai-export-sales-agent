@@ -474,3 +474,190 @@ async def test_validation_error_uses_error_envelope(
     error = response.json()["error"]
     assert error["code"] == "VALIDATION_ERROR"
     assert any(detail["field"] == "items" for detail in error["details"])
+
+
+async def approve_quote(client: AsyncClient, seed: ApiSeed, quote_id: str) -> dict[str, Any]:
+    submitted = await client.post(
+        f"/api/v1/quotes/{quote_id}/submit-approval",
+        headers=seed.requester_headers,
+    )
+    assert submitted.status_code == 200, submitted.text
+    approved = await client.post(
+        f"/api/v1/quotes/{quote_id}/approve",
+        headers=seed.approver_headers,
+    )
+    assert approved.status_code == 200, approved.text
+    return approved.json()["data"]
+
+
+async def test_recalculate_reprices_with_current_price(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_api(session, "api-recalculate")
+    created = await create_quote(client, seed)
+
+    tier = await session.scalar(select(PriceTier).where(PriceTier.product_id == seed.product.id))
+    assert tier is not None
+    tier.unit_price = Decimal("2.3000")
+    await session.flush()
+
+    response = await client.post(
+        f"/api/v1/quotes/{created['id']}/recalculate",
+        json={"price_as_of": "2026-11-03"},
+        headers=seed.requester_headers,
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["grand_total"] == "2300.0000"
+    assert data["items"][0]["unit_price"] == "2.3000"
+    assert data["events"][-1]["event_type"] == "REVISED"
+    assert data["events"][-1]["event_payload"] == {
+        "action": "recalculate",
+        "price_as_of": "2026-11-03",
+        "grand_total": "2300.0000",
+    }
+
+
+async def test_recalculate_rejects_non_draft_quote(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_api(session, "api-recalculate-approved")
+    created = await create_quote(client, seed)
+    await approve_quote(client, seed, created["id"])
+
+    response = await client.post(
+        f"/api/v1/quotes/{created['id']}/recalculate",
+        headers=seed.requester_headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "INVALID_STATUS_TRANSITION"
+
+
+async def test_revise_rejected_quote_returns_to_draft(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_api(session, "api-revise")
+    created = await create_quote(client, seed)
+    await client.post(
+        f"/api/v1/quotes/{created['id']}/submit-approval",
+        headers=seed.requester_headers,
+    )
+    rejected = await client.post(
+        f"/api/v1/quotes/{created['id']}/reject",
+        headers=seed.approver_headers,
+    )
+    assert rejected.status_code == 200
+
+    response = await client.post(
+        f"/api/v1/quotes/{created['id']}/revise",
+        headers=seed.requester_headers,
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["status"] == "DRAFT"
+    assert data["events"][-1]["event_type"] == "REVISED"
+
+
+async def test_send_quote_requires_submit_permission(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_api(session, "api-send")
+    created = await create_quote(client, seed)
+    await approve_quote(client, seed, created["id"])
+
+    denied = await client.post(
+        f"/api/v1/quotes/{created['id']}/send",
+        headers=seed.approver_headers,
+    )
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "PERMISSION_DENIED"
+
+    sent = await client.post(
+        f"/api/v1/quotes/{created['id']}/send",
+        json={"note": "emailed to buyer"},
+        headers=seed.requester_headers,
+    )
+    assert sent.status_code == 200, sent.text
+    data = sent.json()["data"]
+    assert data["status"] == "SENT"
+    assert data["events"][-1]["event_type"] == "SENT"
+    assert data["events"][-1]["event_payload"] == {"note": "emailed to buyer"}
+
+
+async def test_expire_quote_after_validity(client: AsyncClient, session: AsyncSession) -> None:
+    seed = await seed_api(session, "api-expire")
+    created = await create_quote(client, seed, valid_until="2026-10-31")
+    await approve_quote(client, seed, created["id"])
+
+    response = await client.post(
+        f"/api/v1/quotes/{created['id']}/expire",
+        json={"as_of": "2026-11-03"},
+        headers=seed.requester_headers,
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["status"] == "EXPIRED"
+    assert data["events"][-1]["event_type"] == "EXPIRED"
+    assert data["events"][-1]["event_payload"] == {"as_of": "2026-11-03"}
+
+
+async def test_expire_rejects_valid_quote(client: AsyncClient, session: AsyncSession) -> None:
+    seed = await seed_api(session, "api-expire-early")
+    created = await create_quote(client, seed)
+    await approve_quote(client, seed, created["id"])
+
+    response = await client.post(
+        f"/api/v1/quotes/{created['id']}/expire",
+        json={"as_of": "2026-11-03"},
+        headers=seed.requester_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "VALIDITY_NOT_REACHED"
+
+
+async def test_generate_quote_pdf_and_xlsx(client: AsyncClient, session: AsyncSession) -> None:
+    seed = await seed_api(session, "api-documents")
+    created = await create_quote(client, seed, quote_no="Q-DOC-1")
+
+    pdf = await client.post(
+        f"/api/v1/quotes/{created['id']}/documents",
+        params={"format": "PDF"},
+        headers=seed.requester_headers,
+    )
+    assert pdf.status_code == 200
+    assert pdf.headers["content-type"] == "application/pdf"
+    assert 'filename="Q-DOC-1-v1.pdf"' in pdf.headers["content-disposition"]
+    assert pdf.content.startswith(b"%PDF")
+
+    xlsx = await client.post(
+        f"/api/v1/quotes/{created['id']}/documents",
+        params={"format": "XLSX"},
+        headers=seed.requester_headers,
+    )
+    assert xlsx.status_code == 200
+    assert xlsx.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert 'filename="Q-DOC-1-v1.xlsx"' in xlsx.headers["content-disposition"]
+    assert xlsx.content.startswith(b"PK")
+
+
+async def test_generate_quote_document_rejects_unknown_format(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_api(session, "api-documents-invalid")
+    created = await create_quote(client, seed)
+
+    response = await client.post(
+        f"/api/v1/quotes/{created['id']}/documents",
+        params={"format": "DOCX"},
+        headers=seed.requester_headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
