@@ -7,6 +7,7 @@ declare module 'vue-router' {
     public?: boolean
     title?: string
     permission?: string
+    activeMenu?: string
   }
 }
 
@@ -50,6 +51,12 @@ const routes: RouteRecordRaw[] = [
         name: 'customers',
         component: () => import('@/views/customers/CustomerListView.vue'),
         meta: { title: '客户管理', permission: 'customer:read' },
+      },
+      {
+        path: 'customers/:id',
+        name: 'customer-detail',
+        component: () => import('@/views/customers/CustomerDetailView.vue'),
+        meta: { title: '客户详情', permission: 'customer:read', activeMenu: '/customers' },
       },
       {
         path: 'followups',

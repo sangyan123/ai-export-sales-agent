@@ -53,6 +53,9 @@ const visibleMenu = computed(() =>
 const pageTitle = computed(() =>
   typeof route.meta.title === 'string' ? route.meta.title : '工作台',
 )
+const activeMenu = computed(() =>
+  typeof route.meta.activeMenu === 'string' ? route.meta.activeMenu : route.path,
+)
 const displayName = computed(() => auth.user?.display_name ?? '未登录')
 const roleLabel = computed(() => ROLE_LABELS[auth.user?.role ?? ''] ?? auth.user?.role ?? '')
 const initials = computed(() => displayName.value.trim().charAt(0).toUpperCase() || 'U')
@@ -78,7 +81,7 @@ async function handleCommand(command: string): Promise<void> {
         </div>
       </div>
 
-      <el-menu :default-active="route.path" router class="nav-menu">
+      <el-menu :default-active="activeMenu" router class="nav-menu">
         <el-menu-item v-for="item in visibleMenu" :key="item.path" :index="item.path">
           <el-icon><component :is="item.icon" /></el-icon>
           <span>{{ item.label }}</span>

@@ -132,7 +132,7 @@ export async function getEnvelope<T>(
   url: string,
   config?: AxiosRequestConfig,
 ): Promise<ApiEnvelope<T>> {
-  const response = await http.get<ApiEnvelope<T>>(url, config)
+  const response = await http.request<ApiEnvelope<T>>({ ...config, url })
   return response.data
 }
 
