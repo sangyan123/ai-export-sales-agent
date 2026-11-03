@@ -378,6 +378,27 @@ MVP 的邮件可只生成草案、复制文本或下载文件；`send` 接口可
 | GET | `/health/live` | Public/Network | 进程存活 |
 | GET | `/health/ready` | Internal | 依赖就绪检查 |
 
+`GET /workflow-runs/{run_id}` 返回当前租户的任务状态：
+
+```json
+{
+  "data": {
+    "id": "b183...",
+    "workflow_type": "INQUIRY_ANALYSIS",
+    "business_object_type": "INQUIRY",
+    "business_object_id": "71a1...",
+    "status": "QUEUED",
+    "error_code": null,
+    "started_at": null,
+    "finished_at": null,
+    "created_at": "2026-11-03T05:00:00Z",
+    "updated_at": "2026-11-03T05:00:00Z"
+  }
+}
+```
+
+状态取值为 `QUEUED`、`RUNNING`、`SUCCEEDED`、`FAILED`、`CANCELLED`。`POST /workflow-runs/{run_id}/cancel` 可携带 `{"note": "wrong attachment"}`，仅 `QUEUED`/`RUNNING` 可取消，成功后状态变为 `CANCELLED` 并记录 `finished_at`；终态任务返回 `409 INVALID_WORKFLOW_STATUS`，跨租户或不存在的任务返回 `404 WORKFLOW_RUN_NOT_FOUND`。取消属于写操作，会写入 `workflow.cancel` 审计事件；运行中的任务由 Worker 在执行过程中检查取消状态。接口不返回内部 `input_ref`/`output_ref` 引用。
+
 `GET /audit-logs` 仅返回当前租户的日志，支持分页和 `action`、`resource_type`、`resource_id`、`actor_id`、`created_from`、`created_to` 过滤，按时间倒序返回。每条日志包含 `actor_id`、`action`、`resource_type`、`resource_id`、`request_id`、`ip_hash`、`metadata` 和 `created_at`；IP 地址只保存加盐 SHA-256 摘要，不保存明文。
 
 已接入审计的写操作：
@@ -386,6 +407,7 @@ MVP 的邮件可只生成草案、复制文本或下载文件；`send` 接口可
 |---|---|
 | `QUOTE` | `quote.create`、`quote.create_version`、`quote.submit`、`quote.approve`、`quote.reject`、`quote.recalculate`、`quote.revise`、`quote.send`、`quote.expire`、`quote.cancel` |
 | `INQUIRY` | `inquiry.create`、`inquiry.update`、`inquiry.attachment.upload` |
+| `WORKFLOW_RUN` | `workflow.cancel` |
 
 ## 10. OpenAPI 规范要求
 

@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.pricing import PricingError, PricingErrorCode
 from app.quotes import QuoteError, QuoteErrorCode
+from app.workflows import WorkflowError, WorkflowErrorCode
 
 
 class ApiError(Exception):
@@ -40,6 +41,11 @@ QUOTE_ERROR_STATUS: dict[QuoteErrorCode, int] = {
 
 PRICING_ERROR_STATUS: dict[PricingErrorCode, int] = {
     PricingErrorCode.PRODUCT_NOT_FOUND: 404,
+}
+
+WORKFLOW_ERROR_STATUS: dict[WorkflowErrorCode, int] = {
+    WorkflowErrorCode.WORKFLOW_RUN_NOT_FOUND: 404,
+    WorkflowErrorCode.INVALID_WORKFLOW_STATUS: 409,
 }
 
 
@@ -99,6 +105,15 @@ async def pricing_error_handler(request: Request, exc: PricingError) -> JSONResp
     )
 
 
+async def workflow_error_handler(request: Request, exc: WorkflowError) -> JSONResponse:
+    return _error_response(
+        request,
+        status_code=WORKFLOW_ERROR_STATUS.get(exc.code, 400),
+        code=exc.code.value,
+        message=exc.message,
+    )
+
+
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     details = [
         {
@@ -120,4 +135,5 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(QuoteError, quote_error_handler)
     app.add_exception_handler(PricingError, pricing_error_handler)
+    app.add_exception_handler(WorkflowError, workflow_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
