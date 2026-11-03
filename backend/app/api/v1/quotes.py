@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.common import commit_or_rollback, decimal_str, envelope, iso_datetime
 from app.api.deps import ContextDep, RequestContext, SessionDep
 from app.db.tenant import set_tenant_context
 from app.models.quote import Quote, QuoteEvent, QuoteItem
@@ -50,31 +51,6 @@ class CancelQuoteRequest(BaseModel):
     note: str | None = Field(default=None, max_length=4000)
 
 
-def _iso_datetime(value: datetime) -> str:
-    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
-
-
-def _decimal_str(value: Decimal | None) -> str | None:
-    return None if value is None else format(value, "f")
-
-
-def _envelope(
-    data: Any,
-    context: RequestContext,
-    *,
-    page: int | None = None,
-    page_size: int | None = None,
-    total: int | None = None,
-) -> dict[str, Any]:
-    meta: dict[str, Any] = {
-        "request_id": context.request_id,
-        "timestamp": _iso_datetime(datetime.now(UTC)),
-    }
-    if page is not None:
-        meta.update({"page": page, "page_size": page_size, "total": total})
-    return {"data": data, "meta": meta}
-
-
 def _quote_summary(quote: Quote) -> dict[str, Any]:
     return {
         "id": str(quote.id),
@@ -83,17 +59,17 @@ def _quote_summary(quote: Quote) -> dict[str, Any]:
         "version_no": quote.version_no,
         "status": quote.status,
         "currency": quote.currency,
-        "subtotal": _decimal_str(quote.subtotal),
-        "subtotal_display": _decimal_str(quote.subtotal_display),
-        "discount_total": _decimal_str(quote.discount_total),
-        "freight_total": _decimal_str(quote.freight_total),
-        "other_charges": _decimal_str(quote.other_charges),
-        "grand_total": _decimal_str(quote.grand_total),
-        "grand_total_display": _decimal_str(quote.grand_total_display),
+        "subtotal": decimal_str(quote.subtotal),
+        "subtotal_display": decimal_str(quote.subtotal_display),
+        "discount_total": decimal_str(quote.discount_total),
+        "freight_total": decimal_str(quote.freight_total),
+        "other_charges": decimal_str(quote.other_charges),
+        "grand_total": decimal_str(quote.grand_total),
+        "grand_total_display": decimal_str(quote.grand_total_display),
         "valid_until": quote.valid_until.isoformat() if quote.valid_until else None,
         "created_by": str(quote.created_by) if quote.created_by else None,
-        "created_at": _iso_datetime(quote.created_at),
-        "updated_at": _iso_datetime(quote.updated_at),
+        "created_at": iso_datetime(quote.created_at),
+        "updated_at": iso_datetime(quote.updated_at),
     }
 
 
@@ -103,15 +79,15 @@ def _quote_item(item: QuoteItem) -> dict[str, Any]:
         "line_no": item.line_no,
         "product_id": str(item.product_id) if item.product_id else None,
         "product_snapshot": item.product_snapshot_json,
-        "quantity": _decimal_str(item.quantity),
+        "quantity": decimal_str(item.quantity),
         "unit": item.unit,
-        "priced_quantity": _decimal_str(item.priced_quantity),
+        "priced_quantity": decimal_str(item.priced_quantity),
         "price_unit": item.price_unit,
         "price_basis": item.price_basis,
-        "unit_price": _decimal_str(item.unit_price),
-        "unit_price_display": _decimal_str(item.unit_price_display),
-        "line_total": _decimal_str(item.line_total),
-        "line_total_display": _decimal_str(item.line_total_display),
+        "unit_price": decimal_str(item.unit_price),
+        "unit_price_display": decimal_str(item.unit_price_display),
+        "line_total": decimal_str(item.line_total),
+        "line_total_display": decimal_str(item.line_total_display),
         "price_source_ref": item.price_source_ref,
     }
 
@@ -122,7 +98,7 @@ def _quote_event(event: QuoteEvent) -> dict[str, Any]:
         "event_type": event.event_type,
         "event_payload": event.event_payload,
         "actor_id": str(event.actor_id) if event.actor_id else None,
-        "created_at": _iso_datetime(event.created_at),
+        "created_at": iso_datetime(event.created_at),
     }
 
 
@@ -179,14 +155,6 @@ async def _load_detail(
     return _quote_detail(quote, items, events)
 
 
-async def _commit(session: AsyncSession) -> None:
-    try:
-        await session.commit()
-    except Exception:
-        await session.rollback()
-        raise
-
-
 def _generate_quote_no() -> str:
     stamp = datetime.now(UTC).strftime("%Y%m%d")
     return f"Q-{stamp}-{uuid.uuid4().hex[:8].upper()}"
@@ -225,8 +193,8 @@ async def create_quote(
         source_snapshot=payload.source_snapshot,
         version_no=payload.version_no,
     )
-    await _commit(session)
-    return _envelope(await _load_detail(session, context, quote.id), context)
+    await commit_or_rollback(session)
+    return envelope(await _load_detail(session, context, quote.id), context)
 
 
 @router.get("")
@@ -252,7 +220,7 @@ async def list_quotes(
             .limit(page_size)
         )
     )
-    return _envelope(
+    return envelope(
         [_quote_summary(quote) for quote in quotes],
         context,
         page=page,
@@ -267,7 +235,7 @@ async def get_quote(
     context: ContextDep,
     session: SessionDep,
 ) -> dict[str, Any]:
-    return _envelope(await _load_detail(session, context, quote_id), context)
+    return envelope(await _load_detail(session, context, quote_id), context)
 
 
 @router.post("/{quote_id}/submit-approval")
@@ -281,8 +249,8 @@ async def submit_quote_for_approval(
         quote_id=quote_id,
         actor_id=context.user_id,
     )
-    await _commit(session)
-    return _envelope(await _load_detail(session, context, quote_id), context)
+    await commit_or_rollback(session)
+    return envelope(await _load_detail(session, context, quote_id), context)
 
 
 @router.post("/{quote_id}/approve")
@@ -298,8 +266,8 @@ async def approve_quote(
         approver_id=context.user_id,
         note=payload.decision_note if payload else None,
     )
-    await _commit(session)
-    return _envelope(await _load_detail(session, context, quote_id), context)
+    await commit_or_rollback(session)
+    return envelope(await _load_detail(session, context, quote_id), context)
 
 
 @router.post("/{quote_id}/reject")
@@ -315,8 +283,8 @@ async def reject_quote(
         approver_id=context.user_id,
         note=payload.decision_note if payload else None,
     )
-    await _commit(session)
-    return _envelope(await _load_detail(session, context, quote_id), context)
+    await commit_or_rollback(session)
+    return envelope(await _load_detail(session, context, quote_id), context)
 
 
 @router.post("/{quote_id}/cancel")
@@ -332,5 +300,5 @@ async def cancel_quote(
         actor_id=context.user_id,
         note=payload.note if payload else None,
     )
-    await _commit(session)
-    return _envelope(await _load_detail(session, context, quote_id), context)
+    await commit_or_rollback(session)
+    return envelope(await _load_detail(session, context, quote_id), context)

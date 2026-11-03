@@ -1,7 +1,10 @@
 from fastapi import APIRouter
 
-from app.api.v1 import health, quotes
+from app.api.v1 import customers, health, price_lists, products, quotes
 
 api_router = APIRouter()
 api_router.include_router(health.router)
+api_router.include_router(products.router)
+api_router.include_router(price_lists.router)
+api_router.include_router(customers.router)
 api_router.include_router(quotes.router)
