@@ -94,7 +94,11 @@
 | PATCH | `/tenants/current` | `tenant:update` | 更新企业资料与默认币种/语言 |
 | GET | `/tenants/{tenant_id}/members` | `member:read` | 成员列表；服务端验证租户归属 |
 | PATCH | `/tenants/{tenant_id}/members/{membership_id}` | `member:update_role` | 调整成员角色 |
-| POST | `/tenants/{tenant_id}/members/invitations` | `member:invite` | 邀请成员 |
+| POST | `/tenants/{tenant_id}/members/invitations` | `member:invite` | 邀请成员，返回一次性邀请链接 |
+| POST | `/tenants/{tenant_id}/members/{membership_id}/invitations` | `member:invite` | 重新发送邀请并作废旧链接 |
+| DELETE | `/tenants/{tenant_id}/members/{membership_id}/invitations` | `member:invite` | 取消待接受邀请并移除占位成员 |
+| PATCH | `/tenants/{tenant_id}/members/{membership_id}/status` | `member:update_status` | 停用或启用成员 |
+| POST | `/auth/invitations/accept` | Public | 接受邀请、设置密码并自动登录 |
 
 登录请求需指定目标企业（`tenant_slug` 或 `tenant_id` 二选一），服务端验证用户是否为目标企业有效成员：
 
@@ -143,6 +147,24 @@
 - 目标成员不属于当前租户时返回 `404 MEMBER_NOT_FOUND`；角色未变化时直接返回当前成员信息，不写审计。
 - 将当前唯一的 ACTIVE `OWNER` 降级返回 `409 LAST_OWNER_PROTECTED`；`INVITED` / `DISABLED` 的 OWNER 不计入保护判断。
 - 变更成功写入审计事件 `member.role.update`，`metadata` 记录 `user_id`、`previous_role`、`role_code`。
+
+邀请成员（`POST /tenants/{tenant_id}/members/invitations`）请求示例：
+
+```json
+{
+  "email": "sales@example.com",
+  "display_name": "王小明",
+  "role_code": "SALES_REP"
+}
+```
+
+- 邮箱统一转小写；账号不存在时创建 `INVITED` 占位成员，返回 `member` 与 `invitation.token`、`invitation.expires_at`。明文令牌仅在创建/重发响应中出现一次，服务端只保存 SHA-256 哈希，默认有效期 7 天。
+- 邮箱已是本企业 `ACTIVE` / `DISABLED` 成员时分别返回 `409 MEMBER_ALREADY_EXISTS` / `409 MEMBER_DISABLED`；邮箱已注册到其他企业时返回 `409 EMAIL_ALREADY_REGISTERED`，避免跨企业账号接管。
+- 对 `INVITED` 成员重复邀请会更新角色与显示名并作废旧链接，响应额外包含 `reinvited: true`；写入审计事件 `member.invite`。
+- 重发（`POST .../members/{membership_id}/invitations`）要求成员处于 `INVITED`，否则返回 `409 INVITATION_NOT_PENDING`；旧链接立即失效，写入 `member.invite.resend`。
+- 取消（`DELETE .../members/{membership_id}/invitations`）要求存在待接受邀请；取消后删除占位成员及邀请记录，原链接返回 `404 INVITATION_NOT_FOUND`，写入 `member.invite.cancel`。
+- 启停（`PATCH .../members/{membership_id}/status`）请求体为 `{"status": "DISABLED"}` 或 `{"status": "ACTIVE"}`，需要 `member:update_status`。`INVITED` 成员返回 `409 INVITATION_NOT_ACCEPTED`；停用当前登录账号返回 `409 SELF_DISABLE_NOT_ALLOWED`；停用唯一启用中的所有者返回 `409 LAST_OWNER_PROTECTED`。停用会撤销该成员在当前企业的全部刷新令牌，后续请求因成员非 `ACTIVE` 被拒绝；状态变化写入 `member.disable` / `member.enable` 审计。
+- 接受邀请（`POST /auth/invitations/accept`，公开接口）请求体为 `{"token": "...", "display_name": "王小明", "password": "至少8位且包含字母和数字"}`。链接无效/已取消返回 `404 INVITATION_NOT_FOUND`，已接受/已作废/已过期/成员非待接受分别返回 `409 INVITATION_ALREADY_ACCEPTED` / `INVITATION_REVOKED` / `INVITATION_EXPIRED` / `INVITATION_NOT_ACTIVE`，企业停用返回 `403 TENANT_DISABLED`。成功后激活用户与成员关系、写入 `member.invite.accept` 审计，并返回 `tokens`、`tenant_slug` 与 `email` 完成自动登录；同一链接不可重复使用。
 
 ## 5. 产品与资料接口
 

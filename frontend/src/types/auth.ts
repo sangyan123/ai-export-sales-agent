@@ -26,3 +26,15 @@ export interface CurrentUser {
   role: string
   permissions: string[]
 }
+
+export interface AcceptInvitationPayload {
+  token: string
+  display_name: string
+  password: string
+}
+
+export interface AcceptInvitationResult {
+  tokens: TokenPayload
+  tenant_slug: string
+  email: string
+}

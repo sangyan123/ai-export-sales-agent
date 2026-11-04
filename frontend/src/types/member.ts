@@ -31,3 +31,19 @@ export interface MemberListParams {
   role_code?: MemberRole
   status?: MembershipStatus
 }
+
+export interface MemberInvitationLink {
+  token: string
+  expires_at: string
+}
+
+export interface MemberInvitationResult {
+  member: TenantMember
+  invitation: MemberInvitationLink
+}
+
+export interface MemberInvitePayload {
+  email: string
+  display_name: string
+  role_code: MemberRole
+}

@@ -19,6 +19,12 @@ const routes: RouteRecordRaw[] = [
     meta: { public: true, title: '登录' },
   },
   {
+    path: '/accept-invitation',
+    name: 'accept-invitation',
+    component: () => import('@/views/AcceptInvitationView.vue'),
+    meta: { public: true, title: '接受邀请' },
+  },
+  {
     path: '/',
     component: () => import('@/layouts/AppLayout.vue'),
     children: [

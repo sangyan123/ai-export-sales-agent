@@ -1,10 +1,26 @@
 import type { ApiEnvelope } from '@/types/api'
-import type { CurrentUser, LoginPayload, TokenPayload } from '@/types/auth'
+import type {
+  AcceptInvitationPayload,
+  AcceptInvitationResult,
+  CurrentUser,
+  LoginPayload,
+  TokenPayload,
+} from '@/types/auth'
 
 import { http } from './http'
 
 export async function login(payload: LoginPayload): Promise<TokenPayload> {
   const response = await http.post<ApiEnvelope<TokenPayload>>('/auth/login', payload)
+  return response.data.data
+}
+
+export async function acceptInvitation(
+  payload: AcceptInvitationPayload,
+): Promise<AcceptInvitationResult> {
+  const response = await http.post<ApiEnvelope<AcceptInvitationResult>>(
+    '/auth/invitations/accept',
+    payload,
+  )
   return response.data.data
 }
 
