@@ -12,25 +12,19 @@ import {
   Setting,
   Tickets,
   User,
+  UserFilled,
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
+import { MEMBER_ROLE_LABELS } from '@/constants/member'
 import { useAuthStore } from '@/stores/auth'
+import type { MemberRole } from '@/types/member'
 
 interface MenuItem {
   path: string
   label: string
   icon: Component
   permission?: string
-}
-
-const ROLE_LABELS: Record<string, string> = {
-  OWNER: '企业所有者',
-  TENANT_ADMIN: '企业管理员',
-  SALES_MANAGER: '销售主管',
-  SALES_REP: '业务员',
-  APPROVER: '审批人',
-  VIEWER: '只读成员',
 }
 
 const menuItems: MenuItem[] = [
@@ -42,6 +36,7 @@ const menuItems: MenuItem[] = [
   { path: '/followups', label: '跟进管理', icon: Calendar, permission: 'followup:read' },
   { path: '/ai', label: 'AI 工作台', icon: MagicStick, permission: 'workflow:read' },
   { path: '/settings', label: '企业设置', icon: Setting, permission: 'tenant:read' },
+  { path: '/settings/members', label: '成员管理', icon: UserFilled, permission: 'member:read' },
   { path: '/audit-logs', label: '审计日志', icon: Tickets, permission: 'audit:read' },
 ]
 
@@ -59,7 +54,10 @@ const activeMenu = computed(() =>
   typeof route.meta.activeMenu === 'string' ? route.meta.activeMenu : route.path,
 )
 const displayName = computed(() => auth.user?.display_name ?? '未登录')
-const roleLabel = computed(() => ROLE_LABELS[auth.user?.role ?? ''] ?? auth.user?.role ?? '')
+const roleLabel = computed(() => {
+  const role = auth.user?.role ?? ''
+  return MEMBER_ROLE_LABELS[role as MemberRole] ?? role
+})
 const initials = computed(() => displayName.value.trim().charAt(0).toUpperCase() || 'U')
 
 async function handleCommand(command: string): Promise<void> {
