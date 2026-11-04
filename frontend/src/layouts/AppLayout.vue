@@ -10,6 +10,7 @@ import {
   MagicStick,
   Odometer,
   Setting,
+  Tickets,
   User,
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -41,6 +42,7 @@ const menuItems: MenuItem[] = [
   { path: '/followups', label: '跟进管理', icon: Calendar, permission: 'followup:read' },
   { path: '/ai', label: 'AI 工作台', icon: MagicStick, permission: 'workflow:read' },
   { path: '/settings', label: '企业设置', icon: Setting, permission: 'tenant:read' },
+  { path: '/audit-logs', label: '审计日志', icon: Tickets, permission: 'audit:read' },
 ]
 
 const auth = useAuthStore()

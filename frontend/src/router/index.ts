@@ -88,6 +88,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/settings/SettingsView.vue'),
         meta: { title: '企业设置', permission: 'tenant:read' },
       },
+      {
+        path: 'audit-logs',
+        name: 'audit-logs',
+        component: () => import('@/views/audit/AuditLogView.vue'),
+        meta: { title: '审计日志', permission: 'audit:read' },
+      },
     ],
   },
   {
