@@ -4,6 +4,7 @@ from app.models.customer import Contact, Customer, CustomerPriceOverride
 from app.models.email import EmailDraft
 from app.models.followup import FollowupTask
 from app.models.inquiry import Inquiry, InquiryAttachment, InquiryMessage, InquiryRequirement
+from app.models.invitation import MemberInvitation
 from app.models.matching import ProductMatch
 from app.models.pricing import PriceList, PriceTier
 from app.models.product import Product
@@ -24,6 +25,7 @@ __all__ = [
     "InquiryAttachment",
     "InquiryMessage",
     "InquiryRequirement",
+    "MemberInvitation",
     "PriceList",
     "PriceTier",
     "Product",

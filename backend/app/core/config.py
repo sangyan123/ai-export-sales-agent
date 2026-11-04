@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     jwt_audience: str = "fastener-ai-api"
     access_token_ttl_seconds: int = 900
     refresh_token_ttl_seconds: int = 1_209_600
+    member_invitation_ttl_seconds: int = 604_800
 
     database_url: str = "postgresql+asyncpg://fastener:fastener@localhost:5433/fastener_ai"
     migration_database_url: str = (

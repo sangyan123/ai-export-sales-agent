@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from app.api.common import envelope, envelope_meta, iso_datetime
 from app.api.deps import ContextDep, SessionDep
 from app.api.errors import ApiError, get_request_id
+from app.audit import client_ip_hash
+from app.auth.invitations import accept_invitation
 from app.auth.service import IssuedTokens, login, logout, refresh
 from app.models.tenant import Tenant, User
 
@@ -37,6 +39,35 @@ class RefreshRequest(BaseModel):
 
 class LogoutRequest(BaseModel):
     refresh_token: str = Field(min_length=1)
+
+
+class AcceptInvitationRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=256)
+    display_name: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("token")
+    @classmethod
+    def strip_token(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
+
+    @field_validator("display_name")
+    @classmethod
+    def strip_display_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
+
+    @field_validator("password")
+    @classmethod
+    def require_letters_and_digits(cls, value: str) -> str:
+        if not any(char.isalpha() for char in value) or not any(char.isdigit() for char in value):
+            raise ValueError("password must contain both letters and digits")
+        return value
 
 
 def _token_payload(tokens: IssuedTokens) -> dict[str, Any]:
@@ -83,6 +114,30 @@ async def logout_endpoint(
 ) -> dict[str, Any]:
     await logout(session, user_id=context.user_id, raw_token=payload.refresh_token)
     return envelope({"revoked": True}, context)
+
+
+@router.post("/auth/invitations/accept")
+async def accept_invitation_endpoint(
+    payload: AcceptInvitationRequest,
+    request: Request,
+    session: SessionDep,
+) -> dict[str, Any]:
+    accepted = await accept_invitation(
+        session,
+        token=payload.token,
+        display_name=payload.display_name,
+        password=payload.password,
+        request_id=get_request_id(request),
+        ip_hash=client_ip_hash(request),
+    )
+    return {
+        "data": {
+            "tokens": _token_payload(accepted.tokens),
+            "tenant_slug": accepted.tenant.slug,
+            "email": accepted.user.email,
+        },
+        "meta": envelope_meta(get_request_id(request)),
+    }
 
 
 @router.get("/users/me")

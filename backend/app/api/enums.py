@@ -52,3 +52,8 @@ class MembershipStatus(StrEnum):
     INVITED = "INVITED"
     ACTIVE = "ACTIVE"
     DISABLED = "DISABLED"
+
+
+class MemberStatusUpdate(StrEnum):
+    ACTIVE = "ACTIVE"
+    DISABLED = "DISABLED"

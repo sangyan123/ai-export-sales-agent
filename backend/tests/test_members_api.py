@@ -1,16 +1,20 @@
 import os
+import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.security import create_access_token, hash_password
+from app.core.security import create_access_token, hash_password, hash_refresh_token
 from app.db.session import get_session
 from app.db.tenant import set_tenant_context
 from app.main import app
 from app.models.audit import AuditLog
+from app.models.auth import AuthRefreshToken
+from app.models.invitation import MemberInvitation
 from app.models.tenant import Tenant, TenantMembership, User
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
@@ -336,3 +340,529 @@ async def test_update_member_role_validates_role(
     )
 
     assert response.status_code == 422, response.text
+
+
+def _members_url(account: Account) -> str:
+    return f"/api/v1/tenants/{account.tenant.id}/members"
+
+
+async def invite_member(
+    client: AsyncClient,
+    account: Account,
+    *,
+    email: str = "invited@acme.example",
+    display_name: str = "Invited Member",
+    role_code: str = "SALES_REP",
+) -> dict:
+    response = await client.post(
+        f"{_members_url(account)}/invitations",
+        headers=account.headers,
+        json={"email": email, "display_name": display_name, "role_code": role_code},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["data"]
+
+
+def _member_headers(member: Member, tenant: Tenant) -> dict[str, str]:
+    token = create_access_token(
+        user_id=member.user.id,
+        tenant_id=tenant.id,
+        membership_id=member.membership.id,
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def test_invite_member_creates_pending_membership(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    account = await seed_account(session, "acme")
+
+    data = await invite_member(
+        client,
+        account,
+        email=" New.Hire@Acme.Example ",
+        display_name="  New Hire  ",
+        role_code="SALES_REP",
+    )
+
+    membership = data["member"]
+    assert membership["email"] == "new.hire@acme.example"
+    assert membership["display_name"] == "New Hire"
+    assert membership["role_code"] == "SALES_REP"
+    assert membership["status"] == "INVITED"
+    assert membership["user_status"] == "ACTIVE"
+
+    raw_token = data["invitation"]["token"]
+    assert len(raw_token) >= 40
+    assert data["invitation"]["expires_at"]
+
+    invitation = await session.scalar(
+        select(MemberInvitation).where(
+            MemberInvitation.membership_id == uuid.UUID(membership["id"])
+        )
+    )
+    assert invitation is not None
+    assert invitation.token_hash == hash_refresh_token(raw_token)
+    assert invitation.token_hash != raw_token
+    assert invitation.accepted_at is None
+    assert invitation.revoked_at is None
+
+    log = await session.scalar(
+        select(AuditLog).where(
+            AuditLog.tenant_id == account.tenant.id,
+            AuditLog.action == "member.invite",
+            AuditLog.resource_id == uuid.UUID(membership["id"]),
+        )
+    )
+    assert log is not None
+    assert log.actor_id == account.user.id
+    assert log.metadata_json["email"] == "new.hire@acme.example"
+    assert log.metadata_json["role_code"] == "SALES_REP"
+
+    login = await client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": "new.hire@acme.example",
+            "password": "something-random",
+            "tenant_slug": "acme",
+        },
+    )
+    assert login.status_code == 401, login.text
+
+
+async def test_invite_rejects_existing_member_and_registered_email(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    account = await seed_account(session, "acme")
+    await add_member(session, account.tenant, "active@acme.example", "SALES_REP")
+    await add_member(
+        session, account.tenant, "disabled@acme.example", "SALES_REP", status="DISABLED"
+    )
+    other = await seed_account(session, "other")
+
+    active = await client.post(
+        f"{_members_url(account)}/invitations",
+        headers=account.headers,
+        json={
+            "email": "active@acme.example",
+            "display_name": "Active",
+            "role_code": "VIEWER",
+        },
+    )
+    assert active.status_code == 409, active.text
+    assert active.json()["error"]["code"] == "MEMBER_ALREADY_EXISTS"
+
+    disabled = await client.post(
+        f"{_members_url(account)}/invitations",
+        headers=account.headers,
+        json={
+            "email": "disabled@acme.example",
+            "display_name": "Disabled",
+            "role_code": "VIEWER",
+        },
+    )
+    assert disabled.status_code == 409, disabled.text
+    assert disabled.json()["error"]["code"] == "MEMBER_DISABLED"
+
+    foreign = await client.post(
+        f"{_members_url(account)}/invitations",
+        headers=account.headers,
+        json={
+            "email": other.user.email,
+            "display_name": "Other Owner",
+            "role_code": "VIEWER",
+        },
+    )
+    assert foreign.status_code == 409, foreign.text
+    assert foreign.json()["error"]["code"] == "EMAIL_ALREADY_REGISTERED"
+
+    invalid = await client.post(
+        f"{_members_url(account)}/invitations",
+        headers=account.headers,
+        json={"email": "not-an-email", "display_name": "Bad", "role_code": "VIEWER"},
+    )
+    assert invalid.status_code == 422, invalid.text
+
+
+async def test_reinvite_pending_member_replaces_link(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    account = await seed_account(session, "acme")
+    first = await invite_member(client, account, role_code="SALES_REP")
+    membership_id = uuid.UUID(first["member"]["id"])
+
+    second = await invite_member(
+        client,
+        account,
+        display_name="Renamed Member",
+        role_code="SALES_MANAGER",
+    )
+
+    assert second["member"]["id"] == str(membership_id)
+    assert second["member"]["display_name"] == "Renamed Member"
+    assert second["member"]["role_code"] == "SALES_MANAGER"
+    assert second["invitation"]["token"] != first["invitation"]["token"]
+
+    invitations = (
+        (
+            await session.execute(
+                select(MemberInvitation)
+                .where(MemberInvitation.membership_id == membership_id)
+                .order_by(MemberInvitation.created_at.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(invitations) == 2
+    assert invitations[0].revoked_at is not None
+    assert invitations[1].revoked_at is None
+
+    accept_old = await client.post(
+        "/api/v1/auth/invitations/accept",
+        json={
+            "token": first["invitation"]["token"],
+            "display_name": "Renamed Member",
+            "password": "Invitee123!",
+        },
+    )
+    assert accept_old.status_code == 409, accept_old.text
+    assert accept_old.json()["error"]["code"] == "INVITATION_REVOKED"
+
+
+async def test_resend_and_cancel_invitation(client: AsyncClient, session: AsyncSession) -> None:
+    account = await seed_account(session, "acme")
+    invited = await invite_member(client, account)
+    membership_id = uuid.UUID(invited["member"]["id"])
+
+    resent = await client.post(
+        f"{_members_url(account)}/{membership_id}/invitations",
+        headers=account.headers,
+    )
+    assert resent.status_code == 200, resent.text
+    resent_token = resent.json()["data"]["invitation"]["token"]
+    assert resent_token != invited["invitation"]["token"]
+
+    stale = await client.post(
+        "/api/v1/auth/invitations/accept",
+        json={
+            "token": invited["invitation"]["token"],
+            "display_name": "Invited Member",
+            "password": "Invitee123!",
+        },
+    )
+    assert stale.status_code == 409, stale.text
+
+    active_rep = await add_member(session, account.tenant, "rep@acme.example", "SALES_REP")
+    not_pending = await client.post(
+        f"{_members_url(account)}/{active_rep.membership.id}/invitations",
+        headers=account.headers,
+    )
+    assert not_pending.status_code == 409, not_pending.text
+    assert not_pending.json()["error"]["code"] == "INVITATION_NOT_PENDING"
+
+    cancelled = await client.delete(
+        f"{_members_url(account)}/{membership_id}/invitations",
+        headers=account.headers,
+    )
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json()["data"]["cancelled"] is True
+
+    assert (
+        await session.scalar(select(TenantMembership).where(TenantMembership.id == membership_id))
+        is None
+    )
+    assert await session.scalar(select(User).where(User.email == "invited@acme.example")) is None
+
+    actions = (
+        (
+            await session.execute(
+                select(AuditLog.action).where(AuditLog.tenant_id == account.tenant.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert "member.invite" in actions
+    assert "member.invite.resend" in actions
+    assert "member.invite.cancel" in actions
+
+    accept_cancelled = await client.post(
+        "/api/v1/auth/invitations/accept",
+        json={
+            "token": resent_token,
+            "display_name": "Invited Member",
+            "password": "Invitee123!",
+        },
+    )
+    assert accept_cancelled.status_code == 404, accept_cancelled.text
+    assert accept_cancelled.json()["error"]["code"] == "INVITATION_NOT_FOUND"
+
+
+async def test_accept_invitation_activates_account(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    account = await seed_account(session, "acme")
+    invited = await invite_member(client, account, display_name="Pending Name")
+    raw_token = invited["invitation"]["token"]
+
+    weak = await client.post(
+        "/api/v1/auth/invitations/accept",
+        json={"token": raw_token, "display_name": "New Member", "password": "short"},
+    )
+    assert weak.status_code == 422, weak.text
+
+    response = await client.post(
+        "/api/v1/auth/invitations/accept",
+        json={
+            "token": raw_token,
+            "display_name": "New Member",
+            "password": "Invitee123!",
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["tenant_slug"] == "acme"
+    assert data["email"] == "invited@acme.example"
+    assert data["tokens"]["access_token"]
+    assert data["tokens"]["refresh_token"]
+
+    user = await session.scalar(select(User).where(User.email == "invited@acme.example"))
+    assert user is not None
+    membership = await session.scalar(
+        select(TenantMembership).where(TenantMembership.user_id == user.id)
+    )
+    assert membership is not None
+    assert membership.status == "ACTIVE"
+    assert user.display_name == "New Member"
+
+    invitation = await session.scalar(
+        select(MemberInvitation).where(MemberInvitation.membership_id == membership.id)
+    )
+    assert invitation is not None
+    assert invitation.accepted_at is not None
+
+    reused = await client.post(
+        "/api/v1/auth/invitations/accept",
+        json={
+            "token": raw_token,
+            "display_name": "New Member",
+            "password": "Invitee123!",
+        },
+    )
+    assert reused.status_code == 409, reused.text
+    assert reused.json()["error"]["code"] == "INVITATION_ALREADY_ACCEPTED"
+
+    login = await client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": "invited@acme.example",
+            "password": "Invitee123!",
+            "tenant_slug": "acme",
+        },
+    )
+    assert login.status_code == 200, login.text
+
+    log = await session.scalar(
+        select(AuditLog).where(
+            AuditLog.tenant_id == account.tenant.id,
+            AuditLog.action == "member.invite.accept",
+        )
+    )
+    assert log is not None
+    assert log.actor_id == user.id
+
+
+async def test_accept_invitation_rejects_invalid_and_expired_links(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    account = await seed_account(session, "acme")
+    invited = await invite_member(client, account)
+
+    unknown = await client.post(
+        "/api/v1/auth/invitations/accept",
+        json={
+            "token": "unknown-token-value-123456",
+            "display_name": "Nobody",
+            "password": "Invitee123!",
+        },
+    )
+    assert unknown.status_code == 404, unknown.text
+    assert unknown.json()["error"]["code"] == "INVITATION_NOT_FOUND"
+
+    invitation = await session.scalar(
+        select(MemberInvitation).where(
+            MemberInvitation.membership_id == uuid.UUID(invited["member"]["id"])
+        )
+    )
+    assert invitation is not None
+    invitation.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+    await session.flush()
+
+    expired = await client.post(
+        "/api/v1/auth/invitations/accept",
+        json={
+            "token": invited["invitation"]["token"],
+            "display_name": "Late Member",
+            "password": "Invitee123!",
+        },
+    )
+    assert expired.status_code == 409, expired.text
+    assert expired.json()["error"]["code"] == "INVITATION_EXPIRED"
+
+
+async def test_invitation_endpoints_require_permission(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    manager = await seed_account(session, "manager", role_code="SALES_MANAGER")
+    invited = await add_member(
+        session, manager.tenant, "pending@manager.example", "VIEWER", status="INVITED"
+    )
+
+    create = await client.post(
+        f"{_members_url(manager)}/invitations",
+        headers=manager.headers,
+        json={
+            "email": "new@manager.example",
+            "display_name": "New",
+            "role_code": "VIEWER",
+        },
+    )
+    assert create.status_code == 403, create.text
+
+    resend = await client.post(
+        f"{_members_url(manager)}/{invited.membership.id}/invitations",
+        headers=manager.headers,
+    )
+    assert resend.status_code == 403, resend.text
+
+    cancel = await client.delete(
+        f"{_members_url(manager)}/{invited.membership.id}/invitations",
+        headers=manager.headers,
+    )
+    assert cancel.status_code == 403, cancel.text
+
+
+async def test_disable_member_revokes_sessions_and_audits(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    account = await seed_account(session, "acme")
+    rep = await add_member(session, account.tenant, "rep@acme.example", "SALES_REP")
+    rep_headers = _member_headers(rep, account.tenant)
+
+    token = AuthRefreshToken(
+        user_id=rep.user.id,
+        tenant_id=account.tenant.id,
+        membership_id=rep.membership.id,
+        token_hash="a" * 64,
+        expires_at=datetime.now(UTC) + timedelta(days=1),
+    )
+    session.add(token)
+    await session.flush()
+
+    response = await client.patch(
+        f"{_members_url(account)}/{rep.membership.id}/status",
+        headers=account.headers,
+        json={"status": "DISABLED"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "DISABLED"
+
+    await session.refresh(token)
+    assert token.revoked_at is not None
+
+    denied = await client.get(_members_url(account), headers=rep_headers)
+    assert denied.status_code == 403, denied.text
+    assert denied.json()["error"]["code"] == "TENANT_ACCESS_DENIED"
+
+    log = await session.scalar(
+        select(AuditLog).where(
+            AuditLog.tenant_id == account.tenant.id,
+            AuditLog.action == "member.disable",
+            AuditLog.resource_id == rep.membership.id,
+        )
+    )
+    assert log is not None
+    assert log.metadata_json["previous_status"] == "ACTIVE"
+    assert log.metadata_json["status"] == "DISABLED"
+
+
+async def test_enable_member_writes_audit(client: AsyncClient, session: AsyncSession) -> None:
+    account = await seed_account(session, "acme")
+    rep = await add_member(
+        session, account.tenant, "rep@acme.example", "SALES_REP", status="DISABLED"
+    )
+
+    response = await client.patch(
+        f"{_members_url(account)}/{rep.membership.id}/status",
+        headers=account.headers,
+        json={"status": "ACTIVE"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "ACTIVE"
+
+    await session.refresh(rep.membership)
+    assert rep.membership.status == "ACTIVE"
+
+    log = await session.scalar(
+        select(AuditLog).where(
+            AuditLog.tenant_id == account.tenant.id,
+            AuditLog.action == "member.enable",
+            AuditLog.resource_id == rep.membership.id,
+        )
+    )
+    assert log is not None
+
+
+async def test_update_member_status_guards(client: AsyncClient, session: AsyncSession) -> None:
+    account = await seed_account(session, "acme")
+    invited = await add_member(
+        session, account.tenant, "invited@acme.example", "VIEWER", status="INVITED"
+    )
+
+    not_accepted = await client.patch(
+        f"{_members_url(account)}/{invited.membership.id}/status",
+        headers=account.headers,
+        json={"status": "DISABLED"},
+    )
+    assert not_accepted.status_code == 409, not_accepted.text
+    assert not_accepted.json()["error"]["code"] == "INVITATION_NOT_ACCEPTED"
+
+    self_disable = await client.patch(
+        f"{_members_url(account)}/{account.membership.id}/status",
+        headers=account.headers,
+        json={"status": "DISABLED"},
+    )
+    assert self_disable.status_code == 409, self_disable.text
+    assert self_disable.json()["error"]["code"] == "SELF_DISABLE_NOT_ALLOWED"
+
+    invalid = await client.patch(
+        f"{_members_url(account)}/{account.membership.id}/status",
+        headers=account.headers,
+        json={"status": "INVITED"},
+    )
+    assert invalid.status_code == 422, invalid.text
+
+    admin = await seed_account(session, "admin", role_code="TENANT_ADMIN")
+    owner = await add_member(session, admin.tenant, "second-owner@admin.example", "OWNER")
+    last_owner = await client.patch(
+        f"{_members_url(admin)}/{owner.membership.id}/status",
+        headers=admin.headers,
+        json={"status": "DISABLED"},
+    )
+    assert last_owner.status_code == 409, last_owner.text
+    assert last_owner.json()["error"]["code"] == "LAST_OWNER_PROTECTED"
+
+
+async def test_update_member_status_requires_permission(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    manager = await seed_account(session, "manager", role_code="SALES_MANAGER")
+    rep = await add_member(session, manager.tenant, "rep@manager.example", "SALES_REP")
+
+    response = await client.patch(
+        f"{_members_url(manager)}/{rep.membership.id}/status",
+        headers=manager.headers,
+        json={"status": "DISABLED"},
+    )
+    assert response.status_code == 403, response.text

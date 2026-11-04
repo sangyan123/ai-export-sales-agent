@@ -7,6 +7,7 @@ class Permission(StrEnum):
     MEMBER_READ = "member:read"
     MEMBER_INVITE = "member:invite"
     MEMBER_UPDATE_ROLE = "member:update_role"
+    MEMBER_UPDATE_STATUS = "member:update_status"
     PRODUCT_READ = "product:read"
     PRODUCT_CREATE = "product:create"
     PRODUCT_UPDATE = "product:update"
