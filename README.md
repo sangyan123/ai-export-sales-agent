@@ -84,10 +84,12 @@ cp .env.example .env
 docker compose up -d
 
 # 服务地址：
+#   Web      → http://localhost:8080
 #   API      → http://localhost:8000
-#   前端     → http://localhost:5173（需单独启动 dev server）
 #   MinIO    → http://localhost:9001
 ```
+
+`web` 容器使用 Nginx 托管前端静态文件，并将 `/api` 反向代理到 `api:8000`；修改前端代码后执行 `docker compose up -d --build web` 重新构建。
 
 ### 方式二：本地开发
 
@@ -158,6 +160,7 @@ Word 版本位于 [`docx/`](docx/) 目录。
 | `DATABASE_URL` | PostgreSQL 连接串（asyncpg） | 本地 5433 端口 |
 | `REDIS_URL` | Redis 连接串 | 本地 6379 |
 | `S3_ENDPOINT` | S3/MinIO 地址 | 本地 9000 |
+| `WEB_PORT` | Docker Compose 前端访问端口 | `8080` |
 | `LLM_PROVIDER` | `openai` / `openai-compatible` / 空（Mock） | 空 |
 | `LLM_API_KEY` | LLM API Key | — |
 | `LLM_MODEL` | 模型名称 | `gpt-4o-mini` |

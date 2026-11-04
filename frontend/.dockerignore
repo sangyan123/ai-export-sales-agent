@@ -1,0 +1,8 @@
+node_modules
+dist
+dist-ssr
+.vscode
+.env
+.env.*
+!.env.example
+npm-debug.log*

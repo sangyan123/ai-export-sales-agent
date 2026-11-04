@@ -81,6 +81,23 @@ npm run build   # vue-tsc 类型检查 + 生产构建
 npm run preview # 预览构建产物
 ```
 
+## 生产部署
+
+前端通过 `frontend/Dockerfile` 多阶段构建（Node 编译 + Nginx 托管），Compose 中的 `web` 服务默认映射到 `http://localhost:8080`：
+
+```bash
+docker compose up -d --build web
+```
+
+Nginx 配置（[`nginx.conf`](nginx.conf)）提供：
+
+- Vue Router history 模式的 SPA fallback（`try_files ... /index.html`）。
+- `/api` 反向代理到 `api:8000`，无需额外 CORS 配置。
+- 带 hash 的 `/assets` 长缓存，`index.html` 不缓存，并设置常用安全响应头。
+- 上传大小上限 25 MB，覆盖后端 20 MB 附件与导入限制。
+
+修改 `WEB_PORT` 可调整宿主端口；部署在子路径时需同步调整 Vite `base` 与 Nginx location。
+
 ## 当前进度
 
 已完成并经过浏览器验证：
