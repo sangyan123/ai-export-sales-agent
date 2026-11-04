@@ -7,7 +7,12 @@ import type {
   MatchStatus,
   ScanStatus,
 } from '@/types/inquiry'
-import type { CatalogStatus, PriceBasis, ProductCategory } from '@/types/product'
+import type {
+  CatalogStatus,
+  PriceBasis,
+  ProductCategory,
+  ProductImportStatus,
+} from '@/types/product'
 import type { PriceSourceKind, QuoteEventType, QuoteStatus } from '@/types/quote'
 
 export type TagType = 'primary' | 'success' | 'info' | 'warning' | 'danger'
@@ -75,6 +80,58 @@ export const CATALOG_STATUS_TAG: Record<CatalogStatus, TagType> = {
 export const CATALOG_STATUS_OPTIONS = Object.entries(CATALOG_STATUS_LABELS).map(
   ([value, label]) => ({ value: value as CatalogStatus, label }),
 )
+
+export const PRODUCT_IMPORT_STATUS_LABELS: Record<ProductImportStatus, string> = {
+  QUEUED: '排队中',
+  RUNNING: '导入中',
+  SUCCEEDED: '导入成功',
+  FAILED: '导入失败',
+  CANCELLED: '已取消',
+}
+
+export const PRODUCT_IMPORT_STATUS_TAG: Record<ProductImportStatus, TagType> = {
+  QUEUED: 'info',
+  RUNNING: 'warning',
+  SUCCEEDED: 'success',
+  FAILED: 'danger',
+  CANCELLED: 'info',
+}
+
+export const PRODUCT_IMPORT_FIELD_LABELS: Record<string, string> = {
+  product_code: '产品编码',
+  product_name: '产品名称',
+  category: '产品类别',
+  standard_code: '标准号',
+  material: '材质',
+  grade: '等级',
+  diameter: '直径',
+  length: '长度',
+  thread_pitch: '螺距',
+  head_type: '头型',
+  drive_type: '驱动类型',
+  surface_finish: '表面处理',
+  sales_unit: '计价单位',
+  moq: 'MOQ',
+}
+
+export const PRODUCT_IMPORT_ROW_ERROR_LABELS: Record<string, string> = {
+  REQUIRED: '必填项缺失',
+  TOO_LONG: '超出长度限制',
+  INVALID_CATEGORY: '产品类别无效',
+  INVALID_MOQ: 'MOQ 格式无效',
+  DUPLICATE_PRODUCT_CODE: '文件内编码重复',
+  PRODUCT_CODE_EXISTS: '产品编码已存在',
+}
+
+export const PRODUCT_IMPORT_ERROR_MESSAGES: Record<string, string> = {
+  PRODUCT_IMPORT_NOT_FOUND: '导入任务不存在或已被删除',
+  IMPORT_FILE_REQUIRED: '请选择要上传的文件',
+  IMPORT_FILE_UNSUPPORTED: '仅支持 .xlsx 或 .xlsm 文件',
+  IMPORT_FILE_TOO_LARGE: '文件超过 20 MB 上限',
+  IMPORT_TEMPLATE_INVALID: '模板结构无效，请下载标准模板后重新填写',
+  IMPORT_EMPTY: '文件中没有可导入的产品行',
+  IMPORT_TOO_MANY_ROWS: '单次最多导入 5000 行',
+}
 
 
 export const APPROVAL_STATUS_LABELS: Record<OverrideApprovalStatus, string> = {

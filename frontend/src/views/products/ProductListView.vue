@@ -24,13 +24,14 @@ import { formatDateTime } from '@/utils/format'
 
 import PriceListPanel from './components/PriceListPanel.vue'
 import ProductFormDialog from './components/ProductFormDialog.vue'
+import ProductImportPanel from './components/ProductImportPanel.vue'
 
 const auth = useAuthStore()
 
 const canUpdate = computed(() => auth.hasPermission('product:update'))
 const canReadPricing = computed(() => auth.hasPermission('pricing:read'))
 
-const activeTab = ref<'products' | 'pricing'>('products')
+const activeTab = ref<'products' | 'imports' | 'pricing'>('products')
 
 const filters = reactive({
   q: '',
@@ -116,6 +117,11 @@ async function openEdit(product: ProductSummary): Promise<void> {
 }
 
 function handleSaved(): void {
+  void load()
+}
+
+function handleImported(): void {
+  page.value = 1
   void load()
 }
 
@@ -253,6 +259,10 @@ onMounted(load)
             />
           </div>
         </el-card>
+      </el-tab-pane>
+
+      <el-tab-pane label="Excel 导入" name="imports" lazy>
+        <ProductImportPanel @imported="handleImported" />
       </el-tab-pane>
 
       <el-tab-pane v-if="canReadPricing" label="价格表" name="pricing" lazy>

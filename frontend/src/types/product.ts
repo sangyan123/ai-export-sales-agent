@@ -69,6 +69,42 @@ export interface ProductListParams {
   q?: string
 }
 
+export type ProductImportStatus =
+  | 'QUEUED'
+  | 'RUNNING'
+  | 'SUCCEEDED'
+  | 'FAILED'
+  | 'CANCELLED'
+
+export interface ProductImportRowError {
+  row: number
+  field: string | null
+  code: string
+  message: string
+}
+
+export interface ProductImportJob {
+  id: string
+  status: ProductImportStatus
+  filename: string | null
+  total_rows: number
+  imported: number
+  failed: number
+  errors: ProductImportRowError[]
+  errors_truncated: boolean
+  error_code: string | null
+  requested_by: string | null
+  started_at: string | null
+  finished_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ProductImportTemplate {
+  blob: Blob
+  filename: string
+}
+
 export interface PriceTier {
   id: string
   price_list_id: string
