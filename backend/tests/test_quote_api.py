@@ -182,6 +182,23 @@ async def create_quote(client: AsyncClient, seed: ApiSeed, **overrides: Any) -> 
     return response.json()["data"]
 
 
+async def set_policy(client: AsyncClient, seed: ApiSeed, **overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "rounding_mode": "ROUND_HALF_UP",
+        "rounding_decimal_places": None,
+        "moq_enforcement": "WARN",
+        "max_discount_percent": "100",
+    }
+    payload.update(overrides)
+    response = await client.put(
+        "/api/v1/tenants/current/pricing-policy",
+        json=payload,
+        headers=seed.requester_headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
 async def test_create_quote_returns_snapshot_and_echoes_request_id(
     client: AsyncClient, session: AsyncSession
 ) -> None:
@@ -839,3 +856,209 @@ async def test_audit_logs_are_scoped_to_tenant_and_permission(
     denied = await client.get("/api/v1/audit-logs", headers=seed_a.approver_headers)
     assert denied.status_code == 403
     assert denied.json()["error"]["code"] == "PERMISSION_DENIED"
+
+
+async def test_pricing_policy_defaults_update_and_audit(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_api(session, "api-policy")
+
+    default = await client.get(
+        "/api/v1/tenants/current/pricing-policy",
+        headers=seed.approver_headers,
+    )
+    assert default.status_code == 200, default.text
+    data = default.json()["data"]
+    assert data["is_default"] is True
+    assert data["rounding_mode"] == "ROUND_HALF_UP"
+    assert data["rounding_decimal_places"] is None
+    assert data["moq_enforcement"] == "WARN"
+    assert data["max_discount_percent"] == "100.00"
+    assert data["updated_by_id"] is None
+
+    updated = await set_policy(
+        client,
+        seed,
+        rounding_mode="ROUND_DOWN",
+        rounding_decimal_places=2,
+        moq_enforcement="BLOCK",
+        max_discount_percent="12.50",
+    )
+    assert updated["is_default"] is False
+    assert updated["rounding_mode"] == "ROUND_DOWN"
+    assert updated["rounding_decimal_places"] == 2
+    assert updated["moq_enforcement"] == "BLOCK"
+    assert updated["max_discount_percent"] == "12.50"
+    assert updated["updated_by_id"] == str(seed.requester.id)
+    assert updated["updated_at"] is not None
+
+    fetched = await client.get(
+        "/api/v1/tenants/current/pricing-policy",
+        headers=seed.requester_headers,
+    )
+    assert fetched.status_code == 200
+    assert fetched.json()["data"] == updated
+
+    denied = await client.put(
+        "/api/v1/tenants/current/pricing-policy",
+        json={
+            "rounding_mode": "ROUND_HALF_UP",
+            "rounding_decimal_places": None,
+            "moq_enforcement": "WARN",
+            "max_discount_percent": "100",
+        },
+        headers=seed.approver_headers,
+    )
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "PERMISSION_DENIED"
+
+    audit = await client.get(
+        "/api/v1/audit-logs",
+        params={"resource_type": "PRICING_POLICY"},
+        headers=seed.requester_headers,
+    )
+    assert audit.status_code == 200, audit.text
+    assert audit.json()["meta"]["total"] == 1
+    entry = audit.json()["data"][0]
+    assert entry["action"] == "pricing.policy.updated"
+    assert entry["actor_id"] == str(seed.requester.id)
+    assert entry["metadata"]["policy"]["rounding_mode"] == "ROUND_DOWN"
+
+
+async def test_pricing_policy_rounding_applies_to_quote(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_api(session, "api-policy-rounding")
+    tier = await session.scalar(select(PriceTier).where(PriceTier.product_id == seed.product.id))
+    assert tier is not None
+    tier.unit_price = Decimal("2.2250")
+    await session.flush()
+
+    await set_policy(
+        client,
+        seed,
+        rounding_mode="ROUND_DOWN",
+        rounding_decimal_places=2,
+    )
+
+    created = await create_quote(
+        client,
+        seed,
+        items=[
+            {
+                "product_id": str(seed.product.id),
+                "quantity": "1",
+                "unit": "PCS",
+            }
+        ],
+    )
+
+    assert created["subtotal"] == "2.2250"
+    assert created["subtotal_display"] == "2.22"
+    assert created["grand_total"] == "2.2250"
+    assert created["grand_total_display"] == "2.22"
+    assert created["items"][0]["line_total"] == "2.2250"
+
+
+async def test_pricing_policy_moq_block_rejects_quote_and_recalculate(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_api(session, "api-policy-moq")
+    below_moq_items = [
+        {
+            "product_id": str(seed.product.id),
+            "quantity": "500",
+            "unit": "PCS",
+        }
+    ]
+
+    created = await create_quote(client, seed, items=below_moq_items)
+    assert created["status"] == "DRAFT"
+
+    await set_policy(client, seed, moq_enforcement="BLOCK")
+
+    rejected = await client.post(
+        "/api/v1/quotes",
+        json=quote_payload(seed, items=below_moq_items),
+        headers=seed.requester_headers,
+    )
+    assert rejected.status_code == 409
+    assert rejected.json()["error"]["code"] == "MOQ_NOT_MET"
+
+    recalculate = await client.post(
+        f"/api/v1/quotes/{created['id']}/recalculate",
+        headers=seed.requester_headers,
+    )
+    assert recalculate.status_code == 409
+    assert recalculate.json()["error"]["code"] == "MOQ_NOT_MET"
+
+    at_moq = await client.post(
+        "/api/v1/quotes",
+        json=quote_payload(seed),
+        headers=seed.requester_headers,
+    )
+    assert at_moq.status_code == 201, at_moq.text
+
+
+async def test_quote_create_persists_discount_and_charges(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_api(session, "api-policy-charges")
+
+    created = await create_quote(
+        client,
+        seed,
+        discount_total="100",
+        freight_total="50",
+        other_charges="25",
+    )
+
+    assert created["subtotal"] == "2200.0000"
+    assert created["discount_total"] == "100.0000"
+    assert created["freight_total"] == "50.0000"
+    assert created["other_charges"] == "25.0000"
+    assert created["grand_total"] == "2175.0000"
+    assert created["grand_total_display"] == "2175.00"
+
+
+async def test_pricing_policy_discount_limit_enforced_on_submit(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    seed = await seed_api(session, "api-policy-discount")
+    await set_policy(client, seed, max_discount_percent="5")
+
+    within_limit = await create_quote(client, seed, discount_total="100")
+    submitted = await client.post(
+        f"/api/v1/quotes/{within_limit['id']}/submit-approval",
+        headers=seed.requester_headers,
+    )
+    assert submitted.status_code == 200, submitted.text
+
+    over_limit = await create_quote(client, seed, discount_total="200")
+    rejected = await client.post(
+        f"/api/v1/quotes/{over_limit['id']}/submit-approval",
+        headers=seed.requester_headers,
+    )
+    assert rejected.status_code == 409
+    assert rejected.json()["error"]["code"] == "DISCOUNT_LIMIT_EXCEEDED"
+
+
+async def test_pricing_policy_validates_values(client: AsyncClient, session: AsyncSession) -> None:
+    seed = await seed_api(session, "api-policy-validation")
+
+    response = await client.put(
+        "/api/v1/tenants/current/pricing-policy",
+        json={
+            "rounding_mode": "ROUND_DOWN",
+            "rounding_decimal_places": 5,
+            "moq_enforcement": "BLOCK",
+            "max_discount_percent": "150",
+        },
+        headers=seed.requester_headers,
+    )
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "VALIDATION_ERROR"
+    fields = {detail["field"] for detail in error["details"]}
+    assert {"rounding_decimal_places", "max_discount_percent"} <= fields

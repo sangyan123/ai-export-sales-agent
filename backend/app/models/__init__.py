@@ -6,7 +6,7 @@ from app.models.followup import FollowupTask
 from app.models.inquiry import Inquiry, InquiryAttachment, InquiryMessage, InquiryRequirement
 from app.models.invitation import MemberInvitation
 from app.models.matching import ProductMatch
-from app.models.pricing import PriceList, PriceTier
+from app.models.pricing import PriceList, PriceTier, PricingPolicy
 from app.models.product import Product
 from app.models.quote import ApprovalTask, Quote, QuoteEvent, QuoteItem
 from app.models.tenant import Tenant, TenantMembership, User
@@ -28,6 +28,7 @@ __all__ = [
     "MemberInvitation",
     "PriceList",
     "PriceTier",
+    "PricingPolicy",
     "Product",
     "ProductMatch",
     "Quote",

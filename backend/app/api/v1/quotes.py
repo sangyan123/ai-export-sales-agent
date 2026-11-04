@@ -21,7 +21,7 @@ from app.db.tenant import set_tenant_context
 from app.models.customer import Customer
 from app.models.inquiry import Inquiry
 from app.models.quote import Quote, QuoteEvent, QuoteItem
-from app.pricing import PricingService, calculate_quote
+from app.pricing import PricingPolicyService, PricingService, calculate_quote, enforce_moq_policy
 from app.quotes import QuoteError, QuoteErrorCode, QuoteService, QuoteStatus
 from app.quotes.documents import render_quote_pdf, render_quote_xlsx
 
@@ -58,6 +58,9 @@ class QuoteCreateRequest(BaseModel):
     terms: dict[str, Any] = Field(default_factory=dict)
     source_snapshot: dict[str, Any] = Field(default_factory=dict)
     price_as_of: date | None = None
+    discount_total: Decimal = Field(default=Decimal("0"), ge=0)
+    freight_total: Decimal = Field(default=Decimal("0"), ge=0)
+    other_charges: Decimal = Field(default=Decimal("0"), ge=0)
 
     @field_validator("currency")
     @classmethod
@@ -257,6 +260,7 @@ async def create_quote(
     request: Request,
 ) -> dict[str, Any]:
     as_of = payload.price_as_of or datetime.now(UTC).date()
+    policy = await PricingPolicyService(session).effective(context.tenant_id)
     pricing = PricingService.with_default_sources(session)
     lines = [
         await pricing.calculate_line(
@@ -267,10 +271,18 @@ async def create_quote(
             currency=payload.currency,
             as_of=as_of,
             customer_id=payload.customer_id,
+            policy=policy.rounding,
         )
         for item in payload.items
     ]
-    calculation = calculate_quote(lines)
+    enforce_moq_policy(lines, policy)
+    calculation = calculate_quote(
+        lines,
+        discount_total=payload.discount_total,
+        freight_total=payload.freight_total,
+        other_charges=payload.other_charges,
+        policy=policy.rounding,
+    )
 
     quote = await QuoteService(session).create_draft(
         tenant_id=context.tenant_id,

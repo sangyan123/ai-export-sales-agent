@@ -13,7 +13,7 @@ from app.inquiries import InquiryStatus, can_transition
 from app.models.inquiry import Inquiry
 from app.models.product import Product
 from app.models.quote import ApprovalTask, Quote, QuoteEvent, QuoteItem
-from app.pricing import PricingService, calculate_quote
+from app.pricing import PricingPolicyService, PricingService, calculate_quote, enforce_moq_policy
 from app.pricing.engine import LineCalculation, PriceSource, QuoteCalculation
 
 
@@ -29,6 +29,7 @@ class QuoteErrorCode(StrEnum):
     APPROVAL_AMBIGUOUS = "APPROVAL_AMBIGUOUS"
     SELF_APPROVAL_FORBIDDEN = "SELF_APPROVAL_FORBIDDEN"
     VALIDITY_NOT_REACHED = "VALIDITY_NOT_REACHED"
+    DISCOUNT_LIMIT_EXCEEDED = "DISCOUNT_LIMIT_EXCEEDED"
 
 
 class QuoteError(Exception):
@@ -324,6 +325,7 @@ class QuoteService:
             )
 
         pricing = PricingService.with_default_sources(self._session)
+        policy = await PricingPolicyService(self._session).effective(tenant_id)
         lines = [
             await pricing.calculate_line(
                 tenant_id=tenant_id,
@@ -333,14 +335,17 @@ class QuoteService:
                 currency=quote.currency,
                 as_of=as_of,
                 customer_id=customer_id,
+                policy=policy.rounding,
             )
             for item in items
         ]
+        enforce_moq_policy(lines, policy)
         calculation = calculate_quote(
             lines,
             discount_total=quote.discount_total,
             freight_total=quote.freight_total,
             other_charges=quote.other_charges,
+            policy=policy.rounding,
         )
         products = await self._load_products(
             tenant_id=tenant_id,
@@ -381,6 +386,13 @@ class QuoteService:
         await set_tenant_context(self._session, tenant_id)
         quote = await self._get_quote(tenant_id, quote_id, for_update=True)
         self._require_status(quote, QuoteStatus.DRAFT)
+
+        policy = await PricingPolicyService(self._session).effective(tenant_id)
+        if policy.discount_exceeds_limit(quote.subtotal, quote.discount_total):
+            raise QuoteError(
+                QuoteErrorCode.DISCOUNT_LIMIT_EXCEEDED,
+                "discount exceeds the tenant pricing policy limit",
+            )
 
         task = ApprovalTask(
             tenant_id=tenant_id,

@@ -1,24 +1,39 @@
 import re
 import uuid
+from decimal import Decimal
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.common import envelope, iso_datetime
+from app.api.common import decimal_str, envelope, iso_datetime
 from app.api.deps import ContextDep, RequestContext, SessionDep, require_permission
 from app.api.errors import ApiError
 from app.audit import AuditService, client_ip_hash
 from app.core.permissions import Permission
 from app.db.session import commit_or_rollback
 from app.db.tenant import set_tenant_context
+from app.models.pricing import PricingPolicy
 from app.models.tenant import Tenant
+from app.pricing import (
+    EffectivePricingPolicy,
+    MoqEnforcement,
+    PricingPolicyService,
+    PricingRoundingMode,
+    effective_policy,
+)
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
 TenantUpdateContext = Annotated[
     RequestContext, Depends(require_permission(Permission.TENANT_UPDATE))
+]
+PricingPolicyReadContext = Annotated[
+    RequestContext, Depends(require_permission(Permission.PRICING_READ))
+]
+PricingPolicyUpdateContext = Annotated[
+    RequestContext, Depends(require_permission(Permission.PRICING_UPDATE))
 ]
 
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -119,6 +134,13 @@ class TenantUpdate(BaseModel):
         return self
 
 
+class PricingPolicyUpdate(BaseModel):
+    rounding_mode: PricingRoundingMode
+    rounding_decimal_places: int | None = Field(default=None, ge=0, le=4)
+    moq_enforcement: MoqEnforcement
+    max_discount_percent: Decimal = Field(ge=0, le=100, max_digits=5, decimal_places=2)
+
+
 def _tenant_detail(tenant: Tenant) -> dict[str, Any]:
     return {
         "id": str(tenant.id),
@@ -145,6 +167,24 @@ async def _get_tenant(session: AsyncSession, tenant_id: uuid.UUID) -> Tenant:
     if tenant is None:
         raise ApiError(404, "TENANT_NOT_FOUND", "tenant not found")
     return tenant
+
+
+def _pricing_policy_detail(
+    row: PricingPolicy | None, policy: EffectivePricingPolicy
+) -> dict[str, Any]:
+    return {
+        "id": str(row.id) if row is not None else None,
+        "rounding_mode": policy.rounding_mode,
+        "rounding_decimal_places": policy.rounding_decimal_places,
+        "moq_enforcement": policy.moq_enforcement,
+        "max_discount_percent": decimal_str(policy.max_discount_percent),
+        "is_default": row is None,
+        "updated_by_id": (
+            str(row.updated_by_id) if row is not None and row.updated_by_id is not None else None
+        ),
+        "created_at": iso_datetime(row.created_at) if row is not None else None,
+        "updated_at": iso_datetime(row.updated_at) if row is not None else None,
+    }
 
 
 @router.get("/current")
@@ -184,3 +224,47 @@ async def update_current_tenant(
         await commit_or_rollback(session)
 
     return envelope(_tenant_detail(tenant), context)
+
+
+@router.get("/current/pricing-policy")
+async def get_pricing_policy(
+    context: PricingPolicyReadContext,
+    session: SessionDep,
+) -> dict[str, Any]:
+    row = await PricingPolicyService(session).get(context.tenant_id)
+    return envelope(_pricing_policy_detail(row, effective_policy(row)), context)
+
+
+@router.put("/current/pricing-policy")
+async def update_pricing_policy(
+    payload: PricingPolicyUpdate,
+    request: Request,
+    context: PricingPolicyUpdateContext,
+    session: SessionDep,
+) -> dict[str, Any]:
+    service = PricingPolicyService(session)
+    row, changed = await service.upsert(
+        tenant_id=context.tenant_id,
+        actor_id=context.user_id,
+        rounding_mode=payload.rounding_mode.value,
+        rounding_decimal_places=payload.rounding_decimal_places,
+        moq_enforcement=payload.moq_enforcement.value,
+        max_discount_percent=payload.max_discount_percent,
+    )
+    if changed:
+        policy = effective_policy(row)
+        AuditService(session).record(
+            tenant_id=context.tenant_id,
+            actor_id=context.user_id,
+            action="pricing.policy.updated",
+            resource_type="PRICING_POLICY",
+            resource_id=row.id,
+            request_id=context.request_id,
+            ip_hash=client_ip_hash(request),
+            metadata={"fields": changed, "policy": policy.snapshot()},
+        )
+        await session.flush()
+        await session.refresh(row)
+        await commit_or_rollback(session)
+
+    return envelope(_pricing_policy_detail(row, effective_policy(row)), context)

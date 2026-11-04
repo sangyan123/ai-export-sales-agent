@@ -5,6 +5,7 @@ from decimal import Decimal
 from sqlalchemy import (
     CheckConstraint,
     Date,
+    ForeignKey,
     ForeignKeyConstraint,
     Index,
     Integer,
@@ -84,3 +85,36 @@ class PriceTier(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
     unit: Mapped[str] = mapped_column(String(20), nullable=False)
     valid_from: Mapped[date | None] = mapped_column(Date)
     valid_to: Mapped[date | None] = mapped_column(Date)
+
+
+class PricingPolicy(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
+    __tablename__ = "pricing_policies"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", name="uq_pricing_policies_tenant_id"),
+        UniqueConstraint("tenant_id", "id", name="uq_pricing_policies_tenant_id_id"),
+        CheckConstraint(
+            "rounding_mode IN ('ROUND_HALF_UP', 'ROUND_HALF_EVEN', 'ROUND_DOWN', 'ROUND_UP')",
+            name="rounding_mode",
+        ),
+        CheckConstraint(
+            "rounding_decimal_places IS NULL OR rounding_decimal_places BETWEEN 0 AND 4",
+            name="rounding_decimal_places",
+        ),
+        CheckConstraint("moq_enforcement IN ('WARN', 'BLOCK')", name="moq_enforcement"),
+        CheckConstraint(
+            "max_discount_percent >= 0 AND max_discount_percent <= 100",
+            name="max_discount_percent",
+        ),
+    )
+
+    rounding_mode: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default="ROUND_HALF_UP"
+    )
+    rounding_decimal_places: Mapped[int | None] = mapped_column(Integer)
+    moq_enforcement: Mapped[str] = mapped_column(String(10), nullable=False, server_default="WARN")
+    max_discount_percent: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), nullable=False, server_default="100"
+    )
+    updated_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )

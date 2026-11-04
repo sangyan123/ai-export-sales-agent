@@ -120,6 +120,9 @@ export interface QuoteCreatePayload {
   terms?: Record<string, unknown>
   source_snapshot?: Record<string, unknown>
   price_as_of?: string | null
+  discount_total?: string
+  freight_total?: string
+  other_charges?: string
 }
 
 export interface QuoteListParams {

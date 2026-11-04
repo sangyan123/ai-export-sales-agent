@@ -27,6 +27,7 @@ class PricingErrorCode(StrEnum):
     QUOTE_EMPTY = "QUOTE_EMPTY"
     DISCOUNT_INVALID = "DISCOUNT_INVALID"
     CHARGE_INVALID = "CHARGE_INVALID"
+    MOQ_NOT_MET = "MOQ_NOT_MET"
 
 
 class PricingWarningCode(StrEnum):

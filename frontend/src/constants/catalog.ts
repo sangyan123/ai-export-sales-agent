@@ -410,4 +410,8 @@ export const QUOTE_ERROR_MESSAGES: Record<string, string> = {
   NO_ELIGIBLE_TIER: '数量未命中任何价格阶梯',
   QUANTITY_INVALID: '行项目数量必须大于 0',
   TIER_AMBIGUOUS: '价格阶梯存在歧义',
+  MOQ_NOT_MET: '报价行数量低于产品 MOQ，请调整数量或联系管理员修改价格策略',
+  DISCOUNT_LIMIT_EXCEEDED: '折扣金额超过企业折扣上限，请调整折扣后再提交审批',
+  DISCOUNT_INVALID: '折扣金额必须介于 0 与报价小计之间',
+  CHARGE_INVALID: '运费和其他费用不能为负数',
 }

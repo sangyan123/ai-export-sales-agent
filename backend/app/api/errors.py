@@ -39,6 +39,7 @@ QUOTE_ERROR_STATUS: dict[QuoteErrorCode, int] = {
     QuoteErrorCode.INVALID_STATUS_TRANSITION: 409,
     QuoteErrorCode.APPROVAL_NOT_FOUND: 409,
     QuoteErrorCode.APPROVAL_AMBIGUOUS: 409,
+    QuoteErrorCode.DISCOUNT_LIMIT_EXCEEDED: 409,
     QuoteErrorCode.QUOTE_EMPTY: 400,
     QuoteErrorCode.INVALID_QUOTE_NO: 400,
     QuoteErrorCode.VALIDITY_NOT_REACHED: 400,
@@ -46,6 +47,7 @@ QUOTE_ERROR_STATUS: dict[QuoteErrorCode, int] = {
 
 PRICING_ERROR_STATUS: dict[PricingErrorCode, int] = {
     PricingErrorCode.PRODUCT_NOT_FOUND: 404,
+    PricingErrorCode.MOQ_NOT_MET: 409,
 }
 
 WORKFLOW_ERROR_STATUS: dict[WorkflowErrorCode, int] = {

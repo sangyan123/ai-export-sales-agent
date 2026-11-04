@@ -54,6 +54,9 @@ const form = reactive({
   incoterm: '',
   payment_terms: '',
   lead_time: '',
+  discount_total: '',
+  freight_total: '',
+  other_charges: '',
 })
 
 const lines = ref<LineForm[]>([emptyLine()])
@@ -126,6 +129,9 @@ function resetForm(): void {
   form.incoterm = ''
   form.payment_terms = ''
   form.lead_time = ''
+  form.discount_total = ''
+  form.freight_total = ''
+  form.other_charges = ''
   lines.value = [emptyLine()]
 }
 
@@ -205,6 +211,24 @@ function buildPayload(): QuoteCreatePayload | null {
     return null
   }
 
+  const discountTotal = form.discount_total.trim()
+  const freightTotal = form.freight_total.trim()
+  const otherCharges = form.other_charges.trim()
+  for (const [label, raw] of [
+    ['折扣金额', discountTotal],
+    ['运费', freightTotal],
+    ['其他费用', otherCharges],
+  ] as const) {
+    if (!raw) {
+      continue
+    }
+    const numeric = Number(raw)
+    if (Number.isNaN(numeric) || numeric < 0) {
+      ElMessage.warning(`${label}必须是不小于 0 的数字`)
+      return null
+    }
+  }
+
   const terms: Record<string, unknown> = {}
   if (form.incoterm.trim()) {
     terms.incoterm = form.incoterm.trim()
@@ -224,6 +248,9 @@ function buildPayload(): QuoteCreatePayload | null {
     quote_no: quoteNo || null,
     valid_until: form.valid_until || null,
     price_as_of: form.price_as_of || null,
+    discount_total: discountTotal || '0',
+    freight_total: freightTotal || '0',
+    other_charges: otherCharges || '0',
     terms,
   }
 }
@@ -409,6 +436,28 @@ async function submit(): Promise<void> {
         </el-table-column>
       </el-table>
 
+      <el-divider content-position="left">价格与费用（{{ form.currency }}）</el-divider>
+      <el-row :gutter="12">
+        <el-col :span="8">
+          <el-form-item label="折扣金额">
+            <el-input v-model="form.discount_total" placeholder="0.00" />
+          </el-form-item>
+        </el-col>
+        <el-col :span="8">
+          <el-form-item label="运费">
+            <el-input v-model="form.freight_total" placeholder="0.00" />
+          </el-form-item>
+        </el-col>
+        <el-col :span="8">
+          <el-form-item label="其他费用">
+            <el-input v-model="form.other_charges" placeholder="0.00" />
+          </el-form-item>
+        </el-col>
+      </el-row>
+      <p class="amount-hint">
+        折扣不能超过报价小计；超过企业折扣上限的报价可以保存草稿，但无法提交审批。
+      </p>
+
       <el-row :gutter="12" class="terms-row">
         <el-col :span="8">
           <el-form-item label="贸易条款">
@@ -481,6 +530,12 @@ async function submit(): Promise<void> {
 
 .terms-row {
   margin-top: 4px;
+}
+
+.amount-hint {
+  margin: -6px 0 14px;
+  color: #8a97ad;
+  font-size: 12px;
 }
 
 .hint {

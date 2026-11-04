@@ -101,6 +101,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '成员管理', permission: 'member:read' },
       },
       {
+        path: 'settings/pricing',
+        name: 'pricing-policy',
+        component: () => import('@/views/settings/PricingPolicyView.vue'),
+        meta: { title: '价格策略', permission: 'pricing:read' },
+      },
+      {
         path: 'audit-logs',
         name: 'audit-logs',
         component: () => import('@/views/audit/AuditLogView.vue'),

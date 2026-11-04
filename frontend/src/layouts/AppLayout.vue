@@ -9,6 +9,7 @@ import {
   Document,
   MagicStick,
   Odometer,
+  PriceTag,
   Setting,
   Tickets,
   User,
@@ -36,6 +37,7 @@ const menuItems: MenuItem[] = [
   { path: '/followups', label: '跟进管理', icon: Calendar, permission: 'followup:read' },
   { path: '/ai', label: 'AI 工作台', icon: MagicStick, permission: 'workflow:read' },
   { path: '/settings', label: '企业设置', icon: Setting, permission: 'tenant:read' },
+  { path: '/settings/pricing', label: '价格策略', icon: PriceTag, permission: 'pricing:read' },
   { path: '/settings/members', label: '成员管理', icon: UserFilled, permission: 'member:read' },
   { path: '/audit-logs', label: '审计日志', icon: Tickets, permission: 'audit:read' },
 ]

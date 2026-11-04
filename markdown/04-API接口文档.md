@@ -92,6 +92,8 @@
 | GET | `/users/me` | Auth | 当前用户信息 |
 | GET | `/tenants/current` | Auth + membership | 当前企业资料 |
 | PATCH | `/tenants/current` | `tenant:update` | 更新企业资料与默认币种/语言 |
+| GET | `/tenants/current/pricing-policy` | `pricing:read` | 读取企业价格策略（无记录时返回默认值） |
+| PUT | `/tenants/current/pricing-policy` | `pricing:update` | 创建或更新企业价格策略 |
 | GET | `/tenants/{tenant_id}/members` | `member:read` | 成员列表；服务端验证租户归属 |
 | PATCH | `/tenants/{tenant_id}/members/{membership_id}` | `member:update_role` | 调整成员角色 |
 | POST | `/tenants/{tenant_id}/members/invitations` | `member:invite` | 邀请成员，返回一次性邀请链接 |
@@ -132,6 +134,24 @@
 - 邮箱统一转小写；币种统一转大写三位 ISO 代码；语言为 `en` 或 `zh-cn` 形式；出口市场去除首尾空白、按忽略大小写去重并丢弃空值，最多 30 项、单项不超过 80 字符。
 - 保存成功写入审计事件 `tenant.profile.updated`，`metadata.fields` 记录本次变化的字段。
 - `GET /tenants/current` 对所有有效成员开放，`PATCH` 需要 `tenant:update`（OWNER / TENANT_ADMIN）。
+
+价格策略读取与更新（`GET/PUT /tenants/current/pricing-policy`）：
+
+```json
+{
+  "rounding_mode": "ROUND_HALF_UP",
+  "rounding_decimal_places": null,
+  "moq_enforcement": "WARN",
+  "max_discount_percent": "100.00"
+}
+```
+
+- `rounding_mode`：`ROUND_HALF_UP`（默认）、`ROUND_HALF_EVEN`、`ROUND_DOWN`、`ROUND_UP`，用于单价/行金额/合计的展示金额；原始计算值不因展示舍入而改变。
+- `rounding_decimal_places`：`null` 表示跟随币种默认精度；否则为 0–4，超出返回 `422`。
+- `moq_enforcement`：`WARN`（默认，仅提示）或 `BLOCK`（低于产品 MOQ 时阻止创建/重算）；`BLOCK` 触发返回 `409 MOQ_NOT_MET`。
+- `max_discount_percent`：0–100 的百分比（最多两位小数）；提交审批时若 `discount_total / subtotal` 超过该上限，返回 `409 DISCOUNT_LIMIT_EXCEEDED`。
+- 无自定义记录时 `GET` 返回默认值并带 `is_default: true` 与 `id: null`；更新成功写入审计事件 `pricing.policy.updated`，`metadata.fields` 记录本次变化的字段。
+- `pricing:read` 对全部角色开放；`pricing:update` 仅 OWNER / TENANT_ADMIN / SALES_MANAGER。
 
 成员列表支持 `page`、`page_size`（默认 20，最大 100）、`q`（匹配邮箱或显示名）、`role_code`、`status` 过滤，返回成员与用户的基本字段（邮箱、显示名、角色、成员状态、加入时间、最近登录时间）。路径中的 `tenant_id` 与当前租户不一致时返回 `403 TENANT_ACCESS_DENIED`。
 
@@ -448,6 +468,9 @@ curl -X POST "$API/api/v1/inquiries/71a1.../attachments" \
   "items": [
     {"product_id": "7c1d...", "quantity": "5000", "unit": "PCS"}
   ],
+  "discount_total": "100.00",
+  "freight_total": "50.00",
+  "other_charges": "25.00",
   "terms": {
     "incoterm": null,
     "payment_terms": null,
@@ -456,6 +479,11 @@ curl -X POST "$API/api/v1/inquiries/71a1.../attachments" \
   }
 }
 ```
+
+- `discount_total`、`freight_total`、`other_charges` 可选，默认 `0`，必须为非负金额；总价按 `小计 - 折扣 + 运费 + 其他费用` 计算。
+- 创建与重算均按企业价格策略的舍入方式生成展示金额；折扣上限只在提交审批时校验，因此超限报价仍可保存为草稿。
+- 价格策略为 `BLOCK` 时，任一报价行低于产品 MOQ 返回 `409 MOQ_NOT_MET`；提交审批时折扣比例超过上限返回 `409 DISCOUNT_LIMIT_EXCEEDED`。
+- 折扣不得为负，也不得超过小计，否则返回 `400 DISCOUNT_INVALID`；费用非法返回 `400 CHARGE_INVALID`。
 
 传入 `inquiry_id` 时，服务端会校验该询盘属于当前租户；不存在或跨租户均返回 `404 INQUIRY_NOT_FOUND`。
 
