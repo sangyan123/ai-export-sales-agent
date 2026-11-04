@@ -8,7 +8,6 @@ from app.api.common import envelope, envelope_meta, iso_datetime
 from app.api.deps import ContextDep, SessionDep
 from app.api.errors import ApiError, get_request_id
 from app.auth.service import IssuedTokens, login, logout, refresh
-from app.db.tenant import set_tenant_context
 from app.models.tenant import Tenant, User
 
 router = APIRouter(tags=["auth"])
@@ -106,25 +105,6 @@ async def current_user(context: ContextDep, session: SessionDep) -> dict[str, An
             },
             "role": context.role_code,
             "permissions": sorted(permission.value for permission in context.permissions),
-        },
-        context,
-    )
-
-
-@router.get("/tenants/current")
-async def current_tenant(context: ContextDep, session: SessionDep) -> dict[str, Any]:
-    await set_tenant_context(session, context.tenant_id)
-    tenant = await session.get(Tenant, context.tenant_id)
-    if tenant is None:
-        raise ApiError(404, "TENANT_NOT_FOUND", "tenant not found")
-    return envelope(
-        {
-            "id": str(tenant.id),
-            "name": tenant.name,
-            "slug": tenant.slug,
-            "status": tenant.status,
-            "plan_code": tenant.plan_code,
-            "created_at": iso_datetime(tenant.created_at),
         },
         context,
     )

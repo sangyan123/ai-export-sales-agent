@@ -1,8 +1,9 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, UniqueConstraint, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, UniqueConstraint, func, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -13,12 +14,31 @@ class Tenant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "tenants"
     __table_args__ = (
         CheckConstraint("status IN ('ACTIVE', 'SUSPENDED', 'ARCHIVED')", name="status"),
+        CheckConstraint(
+            "contact_email IS NULL OR "
+            "contact_email ~* '^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$'",
+            name="contact_email_format",
+        ),
+        CheckConstraint("default_currency ~ '^[A-Z]{3}$'", name="default_currency_format"),
+        CheckConstraint(
+            "default_language ~ '^[a-z]{2}(-[A-Za-z]{2})?$'", name="default_language_format"
+        ),
     )
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     slug: Mapped[str] = mapped_column(String(80), nullable=False, unique=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="ACTIVE")
     plan_code: Mapped[str | None] = mapped_column(String(40))
+    contact_email: Mapped[str | None] = mapped_column(String(320))
+    contact_phone: Mapped[str | None] = mapped_column(String(40))
+    website: Mapped[str | None] = mapped_column(String(255))
+    address: Mapped[str | None] = mapped_column(String(500))
+    main_products: Mapped[str | None] = mapped_column(String(500))
+    export_markets: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    default_currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default="USD")
+    default_language: Mapped[str] = mapped_column(String(16), nullable=False, server_default="en")
 
 
 class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):

@@ -90,7 +90,8 @@
 | POST | `/auth/refresh` | Auth refresh token | 刷新访问令牌 |
 | POST | `/auth/logout` | Auth | 注销当前会话/刷新令牌 |
 | GET | `/users/me` | Auth | 当前用户信息 |
-| GET | `/tenants/current` | Auth + membership | 当前企业 |
+| GET | `/tenants/current` | Auth + membership | 当前企业资料 |
+| PATCH | `/tenants/current` | `tenant:update` | 更新企业资料与默认币种/语言 |
 | GET | `/tenants/{tenant_id}/members` | `member:read` | 成员列表；服务端验证租户归属 |
 | POST | `/tenants/{tenant_id}/members/invitations` | `member:invite` | 邀请成员 |
 
@@ -105,6 +106,27 @@
 ```
 
 登录成功返回 `access_token`、`refresh_token`（如采用 Cookie，应使用 HttpOnly/Secure/SameSite 设置）、`token_type`、`expires_in` 和 `refresh_expires_in`。Access Token 短时效，Refresh Token 每次刷新轮换；重复使用已轮换的 Refresh Token 会撤销该用户全部刷新令牌。密码永远不返回或记录日志。
+
+企业资料更新示例（`PATCH /tenants/current`）：
+
+```json
+{
+  "name": "Acme Fasteners",
+  "contact_email": "sales@acme.example",
+  "contact_phone": "+86 574 8888 0000",
+  "website": "https://acme.example",
+  "address": "Ningbo, Zhejiang, China",
+  "main_products": "Hex bolts, nuts, washers",
+  "export_markets": ["North America", "Europe"],
+  "default_currency": "EUR",
+  "default_language": "en"
+}
+```
+
+- `name`、`default_currency`、`default_language` 不能为 null；可选字段显式传 `null` 表示清空。
+- 邮箱统一转小写；币种统一转大写三位 ISO 代码；语言为 `en` 或 `zh-cn` 形式；出口市场去除首尾空白、按忽略大小写去重并丢弃空值，最多 30 项、单项不超过 80 字符。
+- 保存成功写入审计事件 `tenant.profile.updated`，`metadata.fields` 记录本次变化的字段。
+- `GET /tenants/current` 对所有有效成员开放，`PATCH` 需要 `tenant:update`（OWNER / TENANT_ADMIN）。
 
 ## 5. 产品与资料接口
 
