@@ -37,3 +37,18 @@ class FollowupStatus(StrEnum):
 class FollowupSource(StrEnum):
     MANUAL = "MANUAL"
     RULE = "RULE"
+
+
+class MemberRole(StrEnum):
+    OWNER = "OWNER"
+    TENANT_ADMIN = "TENANT_ADMIN"
+    SALES_MANAGER = "SALES_MANAGER"
+    SALES_REP = "SALES_REP"
+    APPROVER = "APPROVER"
+    VIEWER = "VIEWER"
+
+
+class MembershipStatus(StrEnum):
+    INVITED = "INVITED"
+    ACTIVE = "ACTIVE"
+    DISABLED = "DISABLED"

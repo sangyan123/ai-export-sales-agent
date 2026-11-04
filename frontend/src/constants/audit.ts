@@ -7,6 +7,7 @@ export const AUDIT_RESOURCE_TYPE_LABELS: Record<string, string> = {
   EMAIL_DRAFT: '邮件草案',
   FOLLOWUP: '跟进任务',
   TENANT: '企业',
+  TENANT_MEMBERSHIP: '企业成员',
   WORKFLOW_RUN: '工作流',
 }
 
@@ -17,6 +18,7 @@ export const AUDIT_RESOURCE_TYPE_TAG: Record<string, TagType> = {
   EMAIL_DRAFT: 'info',
   FOLLOWUP: 'warning',
   TENANT: 'danger',
+  TENANT_MEMBERSHIP: 'danger',
   WORKFLOW_RUN: 'info',
 }
 
@@ -49,5 +51,6 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'followup.update': '更新跟进任务',
   'product.import': '批量导入产品',
   'tenant.profile.updated': '更新企业资料',
+  'member.role.update': '调整成员角色',
   'workflow.cancel': '取消工作流',
 }

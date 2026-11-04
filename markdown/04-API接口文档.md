@@ -93,6 +93,7 @@
 | GET | `/tenants/current` | Auth + membership | 当前企业资料 |
 | PATCH | `/tenants/current` | `tenant:update` | 更新企业资料与默认币种/语言 |
 | GET | `/tenants/{tenant_id}/members` | `member:read` | 成员列表；服务端验证租户归属 |
+| PATCH | `/tenants/{tenant_id}/members/{membership_id}` | `member:update_role` | 调整成员角色 |
 | POST | `/tenants/{tenant_id}/members/invitations` | `member:invite` | 邀请成员 |
 
 登录请求需指定目标企业（`tenant_slug` 或 `tenant_id` 二选一），服务端验证用户是否为目标企业有效成员：
@@ -127,6 +128,21 @@
 - 邮箱统一转小写；币种统一转大写三位 ISO 代码；语言为 `en` 或 `zh-cn` 形式；出口市场去除首尾空白、按忽略大小写去重并丢弃空值，最多 30 项、单项不超过 80 字符。
 - 保存成功写入审计事件 `tenant.profile.updated`，`metadata.fields` 记录本次变化的字段。
 - `GET /tenants/current` 对所有有效成员开放，`PATCH` 需要 `tenant:update`（OWNER / TENANT_ADMIN）。
+
+成员列表支持 `page`、`page_size`（默认 20，最大 100）、`q`（匹配邮箱或显示名）、`role_code`、`status` 过滤，返回成员与用户的基本字段（邮箱、显示名、角色、成员状态、加入时间、最近登录时间）。路径中的 `tenant_id` 与当前租户不一致时返回 `403 TENANT_ACCESS_DENIED`。
+
+角色调整请求示例（`PATCH /tenants/{tenant_id}/members/{membership_id}`）：
+
+```json
+{
+  "role_code": "SALES_MANAGER"
+}
+```
+
+- 角色取值为 `OWNER`、`TENANT_ADMIN`、`SALES_MANAGER`、`SALES_REP`、`APPROVER`、`VIEWER`；需要 `member:update_role`（OWNER / TENANT_ADMIN）。
+- 目标成员不属于当前租户时返回 `404 MEMBER_NOT_FOUND`；角色未变化时直接返回当前成员信息，不写审计。
+- 将当前唯一的 ACTIVE `OWNER` 降级返回 `409 LAST_OWNER_PROTECTED`；`INVITED` / `DISABLED` 的 OWNER 不计入保护判断。
+- 变更成功写入审计事件 `member.role.update`，`metadata` 记录 `user_id`、`previous_role`、`role_code`。
 
 ## 5. 产品与资料接口
 
