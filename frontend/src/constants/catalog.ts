@@ -1,5 +1,5 @@
 import type { CustomerStatus, OverrideApprovalStatus } from '@/types/customer'
-import type { FollowupStatus } from '@/api/followups'
+import type { FollowupSource, FollowupStatus } from '@/types/followup'
 import type {
   InquirySourceType,
   InquiryStatus,
@@ -128,6 +128,24 @@ export const FOLLOWUP_STATUS_TAG: Record<FollowupStatus, TagType> = {
   PENDING: 'warning',
   DONE: 'success',
   CANCELLED: 'info',
+}
+
+export const FOLLOWUP_STATUS_OPTIONS = Object.entries(FOLLOWUP_STATUS_LABELS).map(
+  ([value, label]) => ({ value: value as FollowupStatus, label }),
+)
+
+export const FOLLOWUP_SOURCE_LABELS: Record<FollowupSource, string> = {
+  MANUAL: '手动创建',
+  RULE: '规则生成',
+}
+
+export const FOLLOWUP_ERROR_MESSAGES: Record<string, string> = {
+  FOLLOWUP_NOT_FOUND: '跟进任务不存在或已被删除',
+  CUSTOMER_NOT_FOUND: '关联客户不存在',
+  INQUIRY_NOT_FOUND: '关联询盘不存在',
+  FOLLOWUP_CUSTOMER_MISMATCH: '所选询盘不属于该客户',
+  ASSIGNEE_NOT_MEMBER: '负责人不是当前企业的有效成员',
+  INVALID_STATUS_TRANSITION: '当前跟进状态不支持该操作，请刷新后重试',
 }
 
 export const INQUIRY_STATUS_OPTIONS = Object.entries(INQUIRY_STATUS_LABELS).map(

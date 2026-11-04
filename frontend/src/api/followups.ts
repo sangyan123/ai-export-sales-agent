@@ -1,31 +1,38 @@
-import { getEnvelope } from './http'
+import { FOLLOWUP_ERROR_MESSAGES } from '@/constants/catalog'
+import type {
+  FollowupCreatePayload,
+  FollowupListParams,
+  FollowupTask,
+  FollowupUpdatePayload,
+} from '@/types/followup'
 
-export type FollowupStatus = 'PENDING' | 'DONE' | 'CANCELLED'
+import { ApiError, getData, getEnvelope } from './http'
 
-export interface FollowupTaskSummary {
-  id: string
-  customer_id: string
-  inquiry_id: string | null
-  title: string
-  due_at: string
-  assigned_to: string | null
-  status: FollowupStatus
-  source: 'MANUAL' | 'RULE'
-  completed_at: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface FollowupListParams {
-  page?: number
-  page_size?: number
-  status?: FollowupStatus
-  assigned_to?: string
-  customer_id?: string
-  inquiry_id?: string
-  overdue?: boolean
-}
+export type {
+  FollowupCreatePayload,
+  FollowupListParams,
+  FollowupSource,
+  FollowupStatus,
+  FollowupTask,
+  FollowupTaskSummary,
+  FollowupUpdatePayload,
+} from '@/types/followup'
 
 export function fetchFollowups(params: FollowupListParams = {}) {
-  return getEnvelope<FollowupTaskSummary[]>('/followups', { params })
+  return getEnvelope<FollowupTask[]>('/followups', { params })
+}
+
+export function createFollowup(payload: FollowupCreatePayload) {
+  return getData<FollowupTask>('/followups', { method: 'post', data: payload })
+}
+
+export function updateFollowup(taskId: string, payload: FollowupUpdatePayload) {
+  return getData<FollowupTask>(`/followups/${taskId}`, { method: 'patch', data: payload })
+}
+
+export function followupErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) {
+    return FOLLOWUP_ERROR_MESSAGES[error.code] ?? error.message
+  }
+  return fallback
 }
