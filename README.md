@@ -60,7 +60,7 @@ flowchart LR
 │   │   ├── quotes/       # 报价服务、文档导出
 │   │   └── ...           # 客户、跟进、邮件、审计、工作流
 │   ├── migrations/       # Alembic 数据库迁移
-│   └── tests/            # pytest 测试（18 个测试文件）
+│   └── tests/            # pytest 测试（19 个测试文件）
 ├── frontend/          # Vue 3 管理端
 │   └── src/
 │       ├── api/          # Axios API 客户端

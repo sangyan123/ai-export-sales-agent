@@ -141,6 +141,60 @@
 }
 ```
 
+产品 Excel 导入约定：
+
+- 支持 `.xlsx`、`.xlsm`，单文件上限沿用附件配置（默认 20 MB），单次最多 5000 行。
+- 表头可使用模板中文列名（`产品编码`、`产品名称`……）或对应 snake_case 字段名；必需列：`product_code`、`product_name`、`category`、`sales_unit`。未知列忽略。
+- 导入为全有或全无：任一行校验失败时整批不写入，任务状态为 `FAILED`，`imported` 为 0，`errors` 返回失败行。
+- 文件内重复编码、租户内已存在编码都会导致整批失败。
+- 任务记录复用 `workflow_runs`（`workflow_type=PRODUCT_IMPORT`）；`errors` 最多返回 100 条，`errors_truncated` 标记是否截断。
+- 模板下载返回 `attachment; filename="product-import-template.xlsx"`，含「产品导入」与「填写说明」两个工作表。
+
+上传请求（`POST /products/imports`，`multipart/form-data`）：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `file` | binary | 是 | 产品 Excel（`.xlsx` / `.xlsm`） |
+
+成功响应示例（HTTP 201）：
+
+```json
+{
+  "data": {
+    "id": "6b0f6a52-9a7e-4a53-9f6b-6c1a2b3c4d5e",
+    "status": "SUCCEEDED",
+    "filename": "products.xlsx",
+    "total_rows": 3,
+    "imported": 3,
+    "failed": 0,
+    "errors": [],
+    "errors_truncated": false,
+    "error_code": null,
+    "requested_by": "0b8d6f5a-2c3d-4e5f-8a9b-1c2d3e4f5a6b",
+    "started_at": "2026-11-04T02:30:00Z",
+    "finished_at": "2026-11-04T02:30:00Z",
+    "created_at": "2026-11-04T02:30:00Z",
+    "updated_at": "2026-11-04T02:30:00Z"
+  },
+  "meta": {"request_id": "req_...", "timestamp": "2026-11-04T02:30:00Z"}
+}
+```
+
+`GET /products/imports/{job_id}` 返回相同结构。行校验失败时 `status` 为 `FAILED`、`error_code` 为 `IMPORT_VALIDATION_FAILED`，`errors` 元素示例：
+
+```json
+{
+  "row": 3,
+  "field": "category",
+  "code": "INVALID_CATEGORY",
+  "message": "category must be one of BOLT, NUT, SCREW, WASHER, OTHER"
+}
+```
+
+行错误码：`REQUIRED`、`TOO_LONG`、`INVALID_CATEGORY`、`INVALID_MOQ`、`DUPLICATE_PRODUCT_CODE`、`PRODUCT_CODE_EXISTS`。
+
+请求级错误码：`IMPORT_FILE_REQUIRED`、`IMPORT_FILE_UNSUPPORTED`、`IMPORT_FILE_TOO_LARGE`（HTTP 413）、`IMPORT_TEMPLATE_INVALID`、`IMPORT_EMPTY`、`IMPORT_TOO_MANY_ROWS`；查询不存在的任务返回 `PRODUCT_IMPORT_NOT_FOUND`。
+
 ## 6. 询盘接口
 
 | 方法 | 路径 | 权限 | 说明 |

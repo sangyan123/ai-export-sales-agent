@@ -10,6 +10,7 @@ from app.email import EmailError, EmailErrorCode
 from app.inquiries.analysis import AnalysisError, AnalysisErrorCode
 from app.matching import MatchingError, MatchingErrorCode
 from app.pricing import PricingError, PricingErrorCode
+from app.products import ProductImportError, ProductImportErrorCode
 from app.quotes import QuoteError, QuoteErrorCode
 from app.workflows import WorkflowError, WorkflowErrorCode
 
@@ -82,6 +83,16 @@ EMAIL_GENERATION_ERROR_STATUS: dict[EmailGenerationErrorCode, int] = {
     EmailGenerationErrorCode.PROVIDER_UNAVAILABLE: 502,
     EmailGenerationErrorCode.PROVIDER_HTTP_ERROR: 502,
     EmailGenerationErrorCode.INVALID_OUTPUT: 502,
+}
+
+PRODUCT_IMPORT_ERROR_STATUS: dict[ProductImportErrorCode, int] = {
+    ProductImportErrorCode.PRODUCT_IMPORT_NOT_FOUND: 404,
+    ProductImportErrorCode.IMPORT_FILE_REQUIRED: 400,
+    ProductImportErrorCode.IMPORT_FILE_UNSUPPORTED: 400,
+    ProductImportErrorCode.IMPORT_FILE_TOO_LARGE: 413,
+    ProductImportErrorCode.IMPORT_TEMPLATE_INVALID: 400,
+    ProductImportErrorCode.IMPORT_EMPTY: 400,
+    ProductImportErrorCode.IMPORT_TOO_MANY_ROWS: 400,
 }
 
 
@@ -188,6 +199,15 @@ async def email_generation_error_handler(
     )
 
 
+async def product_import_error_handler(request: Request, exc: ProductImportError) -> JSONResponse:
+    return _error_response(
+        request,
+        status_code=PRODUCT_IMPORT_ERROR_STATUS.get(exc.code, 400),
+        code=exc.code.value,
+        message=exc.message,
+    )
+
+
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     details = [
         {
@@ -214,4 +234,5 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(MatchingError, matching_error_handler)
     app.add_exception_handler(EmailError, email_error_handler)
     app.add_exception_handler(EmailGenerationError, email_generation_error_handler)
+    app.add_exception_handler(ProductImportError, product_import_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)

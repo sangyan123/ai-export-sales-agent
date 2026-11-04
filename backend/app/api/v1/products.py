@@ -1,8 +1,11 @@
 import uuid
 from decimal import Decimal
+from io import BytesIO
+from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,10 +14,16 @@ from app.api.common import decimal_str, envelope, iso_datetime
 from app.api.deps import RequestContext, SessionDep, require_permission
 from app.api.enums import CatalogStatus, ProductCategory
 from app.api.errors import ApiError
+from app.audit import AuditService, client_ip_hash
+from app.core.config import settings
 from app.core.permissions import Permission
 from app.db.session import commit_or_rollback
 from app.db.tenant import set_tenant_context
 from app.models.product import Product
+from app.models.workflow import WorkflowRun
+from app.products import ProductImportError, ProductImportErrorCode
+from app.products.importer import ProductImportService
+from app.products.template import render_import_template
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -25,6 +34,13 @@ ProductCreateContext = Annotated[
 ProductUpdateContext = Annotated[
     RequestContext, Depends(require_permission(Permission.PRODUCT_UPDATE))
 ]
+ProductImportContext = Annotated[
+    RequestContext, Depends(require_permission(Permission.PRODUCT_IMPORT))
+]
+
+IMPORT_SUFFIXES = frozenset({".xlsx", ".xlsm"})
+IMPORT_TEMPLATE_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+IMPORT_READ_CHUNK_BYTES = 1024 * 1024
 
 
 class ProductCreate(BaseModel):
@@ -196,6 +212,117 @@ async def create_product(
     await session.refresh(product)
     await commit_or_rollback(session)
     return envelope(_product_detail(product), context)
+
+
+async def _read_import_file(file: UploadFile) -> tuple[str, bytes]:
+    filename = (file.filename or "").strip()
+    if not filename:
+        raise ProductImportError(
+            ProductImportErrorCode.IMPORT_FILE_REQUIRED, "product import file is required"
+        )
+    if Path(filename).suffix.lower() not in IMPORT_SUFFIXES:
+        raise ProductImportError(
+            ProductImportErrorCode.IMPORT_FILE_UNSUPPORTED,
+            "only .xlsx or .xlsm files are supported",
+        )
+
+    buffer = bytearray()
+    while chunk := await file.read(IMPORT_READ_CHUNK_BYTES):
+        buffer.extend(chunk)
+        if len(buffer) > settings.attachment_max_bytes:
+            raise ProductImportError(
+                ProductImportErrorCode.IMPORT_FILE_TOO_LARGE,
+                f"product import file exceeds {settings.attachment_max_bytes} bytes",
+            )
+    if not buffer:
+        raise ProductImportError(
+            ProductImportErrorCode.IMPORT_TEMPLATE_INVALID, "product import file is empty"
+        )
+    return filename[:255], bytes(buffer)
+
+
+def _import_detail(run: WorkflowRun) -> dict[str, Any]:
+    output = run.output_ref or {}
+    return {
+        "id": str(run.id),
+        "status": run.status,
+        "filename": output.get("filename"),
+        "total_rows": output.get("total_rows", 0),
+        "imported": output.get("imported", 0),
+        "failed": output.get("failed", 0),
+        "errors": output.get("errors", []),
+        "errors_truncated": output.get("errors_truncated", False),
+        "error_code": run.error_code,
+        "requested_by": str(run.requested_by) if run.requested_by else None,
+        "started_at": iso_datetime(run.started_at) if run.started_at else None,
+        "finished_at": iso_datetime(run.finished_at) if run.finished_at else None,
+        "created_at": iso_datetime(run.created_at),
+        "updated_at": iso_datetime(run.updated_at),
+    }
+
+
+def _record_import_audit(
+    request: Request,
+    context: RequestContext,
+    session: AsyncSession,
+    run: WorkflowRun,
+) -> None:
+    output = run.output_ref or {}
+    AuditService(session).record(
+        tenant_id=context.tenant_id,
+        actor_id=context.user_id,
+        action="product.import",
+        resource_type="PRODUCT_IMPORT",
+        resource_id=run.id,
+        request_id=context.request_id,
+        ip_hash=client_ip_hash(request),
+        metadata={
+            "status": run.status,
+            "filename": output.get("filename"),
+            "total_rows": output.get("total_rows"),
+            "imported": output.get("imported"),
+            "failed": output.get("failed"),
+        },
+    )
+
+
+@router.post("/imports", status_code=status.HTTP_201_CREATED)
+async def import_products(
+    file: Annotated[UploadFile, File()],
+    context: ProductImportContext,
+    session: SessionDep,
+    request: Request,
+) -> dict[str, Any]:
+    filename, data = await _read_import_file(file)
+    run = await ProductImportService(session).import_workbook(
+        tenant_id=context.tenant_id,
+        requested_by=context.user_id,
+        filename=filename,
+        data=data,
+        request_id=context.request_id,
+    )
+    _record_import_audit(request, context, session, run)
+    await commit_or_rollback(session)
+    return envelope(_import_detail(run), context)
+
+
+@router.get("/imports/{job_id}")
+async def get_product_import_job(
+    job_id: uuid.UUID,
+    context: ProductReadContext,
+    session: SessionDep,
+) -> dict[str, Any]:
+    run = await ProductImportService(session).get_job(tenant_id=context.tenant_id, job_id=job_id)
+    return envelope(_import_detail(run), context)
+
+
+@router.get("/import-template")
+async def download_product_import_template(context: ProductReadContext) -> StreamingResponse:
+    return StreamingResponse(
+        BytesIO(render_import_template()),
+        media_type=IMPORT_TEMPLATE_MEDIA_TYPE,
+        headers={"Content-Disposition": 'attachment; filename="product-import-template.xlsx"'},
+    )
 
 
 @router.get("/{product_id}")
