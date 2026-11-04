@@ -70,6 +70,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated,
     permissions,
     hasPermission,
+    loadCurrentUser,
     bootstrap,
     login,
     logout,
