@@ -1,4 +1,5 @@
 import type { CustomerStatus, OverrideApprovalStatus } from '@/types/customer'
+import type { EmailDraftStatus } from '@/types/email'
 import type { FollowupSource, FollowupStatus } from '@/types/followup'
 import type {
   InquirySourceType,
@@ -146,6 +147,47 @@ export const FOLLOWUP_ERROR_MESSAGES: Record<string, string> = {
   FOLLOWUP_CUSTOMER_MISMATCH: '所选询盘不属于该客户',
   ASSIGNEE_NOT_MEMBER: '负责人不是当前企业的有效成员',
   INVALID_STATUS_TRANSITION: '当前跟进状态不支持该操作，请刷新后重试',
+}
+
+export const EMAIL_STATUS_LABELS: Record<EmailDraftStatus, string> = {
+  DRAFT: '草稿',
+  APPROVED: '已批准',
+}
+
+export const EMAIL_STATUS_TAG: Record<EmailDraftStatus, TagType> = {
+  DRAFT: 'warning',
+  APPROVED: 'success',
+}
+
+export const EMAIL_LANGUAGE_OPTIONS = [
+  { value: 'en', label: '英文（en）' },
+  { value: 'de', label: '德语（de）' },
+  { value: 'fr', label: '法语（fr）' },
+  { value: 'es', label: '西班牙语（es）' },
+]
+
+export const EMAIL_REVIEW_FLAG_LABELS: Record<string, string> = {
+  MISSING_INFORMATION: '缺失信息',
+  DISCOUNT_INCLUDED: '含折扣',
+}
+
+export const EMAIL_REVIEW_FLAG_TAG: Record<string, TagType> = {
+  MISSING_INFORMATION: 'warning',
+  DISCOUNT_INCLUDED: 'info',
+}
+
+export const EMAIL_ERROR_MESSAGES: Record<string, string> = {
+  INQUIRY_NOT_FOUND: '询盘不存在或已被删除',
+  EMAIL_DRAFT_NOT_FOUND: '邮件草案不存在或已被删除',
+  EMAIL_QUOTE_NOT_FOUND: '指定报价不存在或不属于该询盘',
+  EMAIL_QUOTE_NOT_APPROVED: '该询盘没有已批准报价，无法生成或批准邮件草案',
+  EMAIL_DRAFT_NOT_EDITABLE: '已批准的邮件草案不可再编辑',
+  EMAIL_DRAFT_NOT_APPROVABLE: '当前草案状态不支持批准，请刷新后重试',
+  EMAIL_UNSUPPORTED_LANGUAGE: '当前邮件生成器不支持该语言，请改用英文',
+  EMAIL_GENERATOR_CONFIGURATION_ERROR: '邮件生成器配置不完整，请联系管理员',
+  EMAIL_PROVIDER_UNAVAILABLE: '模型服务暂不可用，请稍后重试',
+  EMAIL_PROVIDER_HTTP_ERROR: '模型服务返回错误，请稍后重试',
+  EMAIL_INVALID_OUTPUT: '模型输出格式无效，请重新生成',
 }
 
 export const INQUIRY_STATUS_OPTIONS = Object.entries(INQUIRY_STATUS_LABELS).map(
