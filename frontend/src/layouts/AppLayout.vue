@@ -256,13 +256,15 @@ async function handleCommand(command: string): Promise<void> {
 <style scoped>
 .app-shell {
   min-height: 100vh;
+  background: #f5f6fa;
 }
 
 .sidebar {
   display: flex;
   flex-direction: column;
-  background: linear-gradient(180deg, #10233f 0%, #0b1730 100%);
-  color: #dbe5f5;
+  background: #ffffff;
+  border-right: 1px solid #eceef4;
+  color: #1e2433;
   transition: width 0.22s ease;
 }
 
@@ -271,7 +273,7 @@ async function handleCommand(command: string): Promise<void> {
   align-items: center;
   gap: 12px;
   padding: 22px 20px 18px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  border-bottom: 1px solid #f1f3f8;
   white-space: nowrap;
   overflow: hidden;
 }
@@ -292,29 +294,30 @@ async function handleCommand(command: string): Promise<void> {
   flex: none;
   place-items: center;
   border-radius: 12px;
-  background: linear-gradient(135deg, #3b82f6, #06b6d4);
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
   color: #fff;
   font-size: 20px;
   font-weight: 800;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3);
 }
 
 .brand-text strong {
   display: block;
-  color: #fff;
+  color: #1e2433;
   font-size: 16px;
   letter-spacing: 0.02em;
 }
 
 .brand-text small {
-  color: #8fa6c9;
+  color: #9aa1b5;
   font-size: 12px;
 }
 
 .nav-menu {
   --el-menu-bg-color: transparent;
-  --el-menu-text-color: #a7b6d3;
-  --el-menu-hover-bg-color: rgba(255, 255, 255, 0.06);
-  --el-menu-active-color: #ffffff;
+  --el-menu-text-color: #5b6377;
+  --el-menu-hover-bg-color: #f5f6fa;
+  --el-menu-active-color: #4f46e5;
 
   flex: 1;
   padding: 10px 12px;
@@ -335,7 +338,7 @@ async function handleCommand(command: string): Promise<void> {
 .nav-menu :deep(.el-sub-menu__title) {
   height: 44px;
   margin: 2px 0;
-  border-radius: 10px;
+  border-radius: 12px;
   font-size: 13.5px;
   line-height: 44px;
   transition: background 0.18s ease, color 0.18s ease;
@@ -345,6 +348,7 @@ async function handleCommand(command: string): Promise<void> {
 .sidebar.collapsed .nav-menu :deep(.el-sub-menu__title) {
   width: 48px;
   min-width: 48px;
+  height: 44px;
   margin: 3px auto;
   padding: 0 !important;
   justify-content: center;
@@ -356,7 +360,8 @@ async function handleCommand(command: string): Promise<void> {
   justify-content: center;
   padding: 0 !important;
 }
-/* 收起态：图标强制水平居中，抵消隐藏标题占位导致的偏移 */
+
+/* 收起态：图标强制水平居中 */
 .sidebar.collapsed .nav-menu :deep(.el-menu-item .el-icon),
 .sidebar.collapsed .nav-menu :deep(.el-sub-menu__title > .el-icon) {
   margin: 0 auto;
@@ -364,14 +369,14 @@ async function handleCommand(command: string): Promise<void> {
 
 .nav-menu .el-menu-item:hover,
 .nav-menu :deep(.el-sub-menu__title:hover) {
-  background: rgba(255, 255, 255, 0.07);
-  color: #e8f0ff;
+  background: #f5f6fa;
+  color: #1e2433;
 }
 
 .nav-menu .el-menu-item.is-active {
   position: relative;
-  background: linear-gradient(90deg, rgba(59, 130, 246, 0.32), rgba(59, 130, 246, 0.14));
-  color: #fff;
+  background: #eef0ff;
+  color: #4f46e5;
   font-weight: 600;
 }
 
@@ -383,7 +388,7 @@ async function handleCommand(command: string): Promise<void> {
   left: 0;
   width: 3px;
   border-radius: 3px;
-  background: #60a5fa;
+  background: #4f46e5;
 }
 
 .sidebar.collapsed .nav-menu .el-menu-item.is-active::before {
@@ -392,7 +397,7 @@ async function handleCommand(command: string): Promise<void> {
 }
 
 .nav-menu :deep(.el-sub-menu.is-opened > .el-sub-menu__title) {
-  color: #dce9ff;
+  color: #1e2433;
   font-weight: 600;
 }
 
@@ -407,8 +412,8 @@ async function handleCommand(command: string): Promise<void> {
   justify-content: center;
   gap: 8px;
   padding: 16px 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-  color: #7c8fb0;
+  border-top: 1px solid #f1f3f8;
+  color: #9aa1b5;
   font-size: 12px;
   white-space: nowrap;
 }
@@ -416,8 +421,8 @@ async function handleCommand(command: string): Promise<void> {
 .version-pill {
   padding: 2px 10px;
   border-radius: 999px;
-  background: rgba(96, 165, 250, 0.16);
-  color: #9cc4fd;
+  background: #eef0ff;
+  color: #4f46e5;
   font-weight: 600;
 }
 
@@ -430,9 +435,9 @@ async function handleCommand(command: string): Promise<void> {
   justify-content: space-between;
   gap: 16px;
   padding: 0 24px;
-  border-bottom: 1px solid #e8edf5;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(8px);
+  border-bottom: 1px solid #eceef4;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(10px);
 }
 
 .topbar-left {
@@ -449,23 +454,23 @@ async function handleCommand(command: string): Promise<void> {
   flex: none;
   place-items: center;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 10px;
   background: transparent;
-  color: #5a6a86;
+  color: #5b6377;
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
 }
 
 .collapse-button:hover {
-  border-color: #dbe3f0;
-  background: #f2f6fd;
-  color: #2563eb;
+  border-color: #e3e6ee;
+  background: #f5f6fa;
+  color: #4f46e5;
 }
 
 .topbar-left h1 {
   margin: 0;
   overflow: hidden;
-  color: #14213d;
+  color: #1e2433;
   font-size: 18px;
   letter-spacing: 0.01em;
   text-overflow: ellipsis;
@@ -489,16 +494,16 @@ async function handleCommand(command: string): Promise<void> {
   align-items: center;
   gap: 10px;
   padding: 6px 12px 6px 6px;
-  border: 1px solid #dbe3f0;
+  border: 1px solid #e3e6ee;
   border-radius: 999px;
-  background: #f7f9fc;
+  background: #ffffff;
   cursor: pointer;
   transition: background 0.18s ease, border-color 0.18s ease;
 }
 
 .user-button:hover {
-  border-color: #b8c8e4;
-  background: #f0f5fd;
+  border-color: #c9cef0;
+  background: #f6f7ff;
 }
 
 .user-meta {
@@ -509,12 +514,12 @@ async function handleCommand(command: string): Promise<void> {
 }
 
 .user-meta strong {
-  color: #1b2a4a;
+  color: #1e2433;
   font-size: 13px;
 }
 
 .user-meta small {
-  color: #8a97ad;
+  color: #9aa1b5;
   font-size: 11px;
 }
 
@@ -529,6 +534,3 @@ async function handleCommand(command: string): Promise<void> {
   }
 }
 </style>
-
-
-

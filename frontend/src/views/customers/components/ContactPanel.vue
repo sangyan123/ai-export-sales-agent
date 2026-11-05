@@ -217,7 +217,7 @@ onMounted(load)
 }
 
 .mail-link {
-  color: #2563eb;
+  color: #4f46e5;
 }
 
 .muted {

@@ -199,7 +199,7 @@ watch(
 }
 
 .website-link {
-  color: #2563eb;
+  color: #4f46e5;
 }
 
 .website-link:hover {

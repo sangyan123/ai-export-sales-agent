@@ -50,7 +50,7 @@ const cards = reactive<StatCard[]>([
     permission: 'inquiry:read',
     url: '/inquiries',
     icon: markRaw(ChatDotRound),
-    accent: '#2563eb',
+    accent: '#4f46e5',
     count: null,
     available: true,
     failed: false,
@@ -256,14 +256,15 @@ onMounted(loadCounts)
   padding: 30px 34px;
   border-radius: 20px;
   background:
-    radial-gradient(circle at 90% 20%, rgba(6, 182, 212, 0.25), transparent 32%),
-    linear-gradient(120deg, #12284f, #173a6b);
-  color: #fff;
+    radial-gradient(circle at 90% 20%, rgba(139, 92, 246, 0.12), transparent 32%),
+    linear-gradient(120deg, #eef0ff, #f3f0ff);
+  border: 1px solid #e2e4fb;
+  color: #1e2433;
 }
 
 .eyebrow {
   margin: 0 0 8px;
-  color: #8fd8f5;
+  color: #4f46e5;
   font-size: 12px;
   letter-spacing: 0.08em;
 }
@@ -275,7 +276,7 @@ onMounted(loadCounts)
 
 .welcome-copy {
   margin: 0;
-  color: #b6c8e5;
+  color: #5b6377;
   font-size: 14px;
 }
 
@@ -283,10 +284,10 @@ onMounted(loadCounts)
   display: grid;
   gap: 8px;
   padding: 18px 22px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid #d8dbf8;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.06);
-  color: #d8f3ff;
+  background: rgba(255, 255, 255, 0.72);
+  color: #4f46e5;
   font-size: 12px;
   text-align: center;
 }
@@ -406,7 +407,7 @@ onMounted(loadCounts)
   place-items: center;
   border-radius: 50%;
   background: #eff6ff;
-  color: #2563eb;
+  color: #4f46e5;
   font-size: 11px;
   font-weight: 700;
 }

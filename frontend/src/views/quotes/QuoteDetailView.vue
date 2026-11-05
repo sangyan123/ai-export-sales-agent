@@ -778,7 +778,7 @@ watch(
   padding: 0;
   border: 0;
   background: transparent;
-  color: #2563eb;
+  color: #4f46e5;
   font-weight: 600;
   cursor: pointer;
 }
