@@ -2,7 +2,7 @@
 
 工业紧固件 AI 外销助手 —— 面向中国中小型紧固件出口工厂的一体化询盘处理、产品匹配、规则化报价与商务邮件生成系统。
 
-> 状态：MVP 开发中（v0.1.0） · 设计基线：v0.9
+> 状态：**试点就绪（pilot-ready）** · 设计基线 v0.9 · MVP 功能开发与工程验收已完成
 
 ## 项目定位
 
@@ -10,7 +10,7 @@
 
 - **LLM 只负责理解与生成**——价格计算、审批、权限等由确定性代码控制
 - **数据来源可追溯**——AI 输出关联询盘原文、产品记录、价格规则
-- **多租户从第一天设计**——所有业务表具备 `tenant_id`，API 与数据库两层隔离
+- **多租户从第一天设计**——所有业务表具备 `tenant_id`，API 与数据库两层隔离（RLS）
 - **Provider 可替换**——LLM、邮件、对象存储均通过适配接口接入
 
 ## 核心业务流程
@@ -37,38 +37,51 @@ flowchart LR
 |------|------|
 | 前端 | Vue 3 + TypeScript + Vite + Element Plus + Pinia + Vue Router |
 | 后端 | Python 3.12 / FastAPI + Pydantic v2 + SQLAlchemy 2 + Alembic |
-| 数据库 | PostgreSQL 16 + pgvector |
+| 数据库 | PostgreSQL 16 + pgvector + 行级租户隔离（RLS） |
 | 缓存/队列 | Redis 7 |
 | 对象存储 | MinIO（S3 兼容） |
-| AI 接入 | OpenAI 兼容 LLM 适配层（支持确定性 Mock 用于开发/测试） |
+| AI 接入 | OpenAI 兼容 LLM 适配层（租户级 Provider 配置 + 确定性 Mock 降级） |
 | 部署 | Docker Compose（模块化单体） |
+
+## 功能概览
+
+- **询盘中心**：文本/EML/附件导入、状态机、AI 解析（字段级置信度 + 原文证据 + 冲突标记）
+- **产品中心**：产品 CRUD、Excel 模板导入、价格表与阶梯价、知识资料库（PDF/DOCX/XLSX，来源分类与解析状态）
+- **报价中心**：规则化报价引擎（价格来源优先级、客户专属价、MOQ 策略、折扣上限）、审批流（禁止自审批）、PDF 导出
+- **邮件助手**：多语言报价邮件草案（确定性模板 / LLM）、审批流
+- **客户管理**：档案、联系人、专属价覆盖、跟进任务、**备注时间线**
+- **AI 工作台**：解析任务状态、邮件草案、**模型用量统计**（token/耗时）
+- **企业设置**：企业资料、成员与邀请、价格策略、**租户级 AI Provider 配置**（密钥 Fernet 加密 + 连通性测试）、审计日志
 
 ## 目录结构
 
 ```
-├── backend/           # FastAPI 后端
+├── backend/                        # FastAPI 后端
 │   ├── app/
-│   │   ├── ai/           # 询盘解析器、邮件生成器（确定性 + LLM）
-│   │   ├── api/v1/       # REST API 路由
-│   │   ├── auth/         # JWT 认证
-│   │   ├── core/         # 配置、权限、安全
-│   │   ├── db/           # SQLAlchemy、租户上下文
-│   │   ├── inquiries/    # 询盘业务逻辑
-│   │   ├── matching/     # 产品匹配（加权评分 + 硬约束冲突检测）
-│   │   ├── models/       # ORM 模型
-│   │   ├── pricing/      # 定价引擎（阶梯价、MOQ、客户专属价）
-│   │   ├── quotes/       # 报价服务、文档导出
-│   │   └── ...           # 客户、跟进、邮件、审计、工作流
-│   ├── migrations/       # Alembic 数据库迁移
-│   └── tests/            # pytest 测试（21 个测试文件）
-├── frontend/          # Vue 3 管理端
-│   └── src/
-│       ├── api/          # Axios API 客户端
-│       ├── views/        # 页面（工作台、询盘、报价、产品、客户、跟进、AI 工作台、设置）
-│       ├── router/       # 路由 + 权限守卫
-│       └── stores/       # Pinia 状态管理
-├── markdown/          # 设计文档（9 篇）
-├── docx/              # 设计文档 Word 版
+│   │   ├── ai/                     # 解析器/邮件生成器 + 评测核心
+│   │   │   ├── parser.py           #   确定性 + OpenAI 兼容实现
+│   │   │   ├── email.py            #   邮件生成（模板 + LLM）
+│   │   │   ├── usage.py            #   LLM 用量追踪（token/duration）
+│   │   │   └── evaluation.py       #   解析 golden set 评测核心
+│   │   ├── api/v1/                 # REST API（15 个路由模块）
+│   │   ├── auth/                   # JWT 认证 + 成员邀请
+│   │   ├── core/                   # 配置、RBAC 权限、安全、加密
+│   │   ├── db/                     # SQLAlchemy、租户上下文（RLS）
+│   │   ├── matching/               # 产品匹配 + 评测核心
+│   │   ├── models/                 # ORM（20 张表，全部租户隔离）
+│   │   ├── pricing/                # 报价引擎（阶梯价/MOQ/客户专属价）
+│   │   ├── quotes/                 # 报价服务、审批、PDF 导出
+│   │   └── ...                     # 客户、跟进、邮件、审计、工作流
+│   ├── migrations/                 # Alembic（20 个迁移）
+│   ├── scripts/
+│   │   ├── seed_demo.py            # 演示账号
+│   │   ├── evaluate_ai_parsing.py  # 解析评测 CLI（--gate）
+│   │   ├── evaluate_matching.py    # 匹配评测 CLI（--gate）
+│   │   └── e2e_acceptance.py       # 端到端验收（13 阶段）
+│   └── tests/                      # pytest（29 个文件，fixtures 含两套 golden set）
+├── frontend/                       # Vue 3 管理端
+├── markdown/                       # 设计文档（9 篇）
+├── docx/                           # 设计文档 Word 版
 └── docker-compose.yml
 ```
 
@@ -115,6 +128,7 @@ npm run dev
 | 邮箱 | 密码 | 角色 |
 |------|------|------|
 | `demo@example.com` | `Demo1234!` | OWNER |
+| `manager@example.com` | `Demo1234!` | SALES_MANAGER（审批人） |
 | `viewer@example.com` | `Demo1234!` | VIEWER |
 
 ## API 文档
@@ -130,10 +144,44 @@ npm run dev
 
 ```bash
 cd backend
-uv run pytest
+uv run pytest                                    # 单元 + Mock 集成
+
+# 全量集成测试（需 PostgreSQL）
+TEST_DATABASE_URL=postgresql+asyncpg://... uv run pytest
 ```
 
-测试覆盖：认证 RBAC、产品/价格目录、产品导入、询盘生命周期、AI 解析、产品匹配、报价计算与审批、邮件生成、客户/联系人/跟进、企业资料、成员与角色管理、审计日志、工作流跟踪。
+覆盖：认证 RBAC、产品/价格目录、产品导入、询盘生命周期、AI 解析、产品匹配、报价计算与审批、邮件生成、客户/联系人/跟进/备注、知识资料、企业资料、成员与角色、Provider 配置（密钥加密/掩码）、审计日志、工作流、租户隔离。
+
+## AI 离线评测
+
+固定标注测试集（golden set）作为回归门槛，防止解析/匹配质量静默退化：
+
+```bash
+cd backend
+
+# 询盘字段解析评测（验收文档 5.1）
+uv run python scripts/evaluate_ai_parsing.py --gate
+
+# 产品匹配评测（验收文档 5.2）
+uv run python scripts/evaluate_matching.py --gate
+```
+
+| 评测 | 数据集 | 指标 | 当前结果 | 门槛 |
+|------|--------|------|----------|------|
+| 字段解析 | 30 条标注询盘（中英文/缺字段/拼写错误/多产品/注入等） | 关键字段归一化准确率、误填率 | **100%** / 0% | ≥ 90% / ≈ 0 |
+| 产品匹配 | 11 SKU 目录 + 10 条标注需求 | Top-1 / Top-3 / MRR / 硬冲突误判 EXACT | **100% / 100% / 1.0** / 0 | Top-3 ≥ 85% / EXACT 误判 = 0 |
+
+标注集位于 `backend/tests/fixtures/`，CI 可用 `--gate` 的退出码作为质量门禁。
+
+## 端到端验收
+
+`scripts/e2e_acceptance.py` 按 PRD「可试点」清单走通 HTTP 级全流程（13 阶段：导入 50 SKU → 解析 → 匹配 → 报价审批 → 邮件 → PDF 导出 → 审计/用量 → Provider 配置 → 租户隔离）：
+
+```bash
+uv run python scripts/e2e_acceptance.py            # 对运行中的 stack 输出 PASS/FAIL 报告
+```
+
+最近一次运行：13/13 PASS（详见提交 `2132c12`）。
 
 ## 设计文档
 
@@ -161,11 +209,20 @@ Word 版本位于 [`docx/`](docx/) 目录。
 | `REDIS_URL` | Redis 连接串 | 本地 6379 |
 | `S3_ENDPOINT` | S3/MinIO 地址 | 本地 9000 |
 | `WEB_PORT` | Docker Compose 前端访问端口 | `8080` |
-| `LLM_PROVIDER` | `openai` / `openai-compatible` / 空（Mock） | 空 |
+| `LLM_PROVIDER` | `openai` / `openai-compatible` / 空（确定性 Mock） | 空 |
 | `LLM_API_KEY` | LLM API Key | — |
 | `LLM_MODEL` | 模型名称 | `gpt-4o-mini` |
 
-未配置 LLM 时系统使用确定性正则解析器和模板邮件生成器，适合本地开发和单元测试。
+未配置 LLM 时系统使用确定性正则解析器和模板邮件生成器，适合本地开发和单元测试。租户可在「企业设置 → 模型配置」覆盖全局 Provider（密钥 Fernet 加密存储，支持连通性测试）。
+
+## 路线图
+
+- [x] MVP 全功能（P0 清单）
+- [x] 解析/匹配 golden set 评测门槛
+- [x] 端到端验收（PRD 可试点清单 13/13）
+- [ ] 真实 LLM Provider 接入后的解析评测对比
+- [ ] 业务标注集扩展（100~200 条，验收文档建议）
+- [ ] UAT 业务验收（邮件质量人工评审，验收文档 5.3/9）
 
 ## License
 
