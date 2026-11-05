@@ -178,3 +178,21 @@ export interface PriceListListParams {
   currency?: string
   status?: CatalogStatus
 }
+
+export type KnowledgeSource = 'CATALOG' | 'PRICE_LIST' | 'CERTIFICATE' | 'SPEC_SHEET' | 'OTHER'
+export type KnowledgeParseStatus = 'UPLOADED' | 'PARSED' | 'FAILED'
+
+export interface KnowledgeDocument {
+  id: string
+  object_key: string
+  filename: string
+  content_type: string
+  size_bytes: number
+  checksum: string
+  source: KnowledgeSource
+  description: string | null
+  parse_status: KnowledgeParseStatus
+  uploaded_by: string | null
+  created_at: string
+  updated_at: string
+}

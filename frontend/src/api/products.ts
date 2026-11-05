@@ -7,6 +7,7 @@ import type {
   ProductListParams,
   ProductPayload,
   ProductSummary,
+  KnowledgeDocument,
 } from '@/types/product'
 
 export type { ProductSummary } from '@/types/product'
@@ -45,4 +46,33 @@ export function importProducts(file: File) {
   const data = new FormData()
   data.append('file', file)
   return getData<ProductImportJob>('/products/imports', { method: 'post', data })
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge documents (知识资料)
+// ---------------------------------------------------------------------------
+
+export function fetchKnowledgeDocuments(
+  params: { page?: number; page_size?: number; source?: string; q?: string } = {},
+) {
+  return getEnvelope<KnowledgeDocument[]>('/knowledge-documents', { params })
+}
+
+export function uploadKnowledgeDocument(
+  file: File,
+  options: { source?: string; description?: string } = {},
+) {
+  const data = new FormData()
+  data.append('file', file)
+  if (options.source) data.append('source', options.source)
+  if (options.description) data.append('description', options.description)
+  return getData<KnowledgeDocument>('/knowledge-documents/upload', {
+    method: 'post',
+    data,
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+export function deleteKnowledgeDocument(documentId: string) {
+  return getData<void>(`/knowledge-documents/${documentId}`, { method: 'delete' })
 }

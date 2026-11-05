@@ -8,6 +8,7 @@ from app.api.v1 import (
     followups,
     health,
     inquiries,
+    knowledge_documents,
     members,
     price_lists,
     products,
@@ -26,6 +27,7 @@ api_router.include_router(price_lists.router)
 api_router.include_router(customers.router)
 api_router.include_router(followups.router)
 api_router.include_router(inquiries.router)
+api_router.include_router(knowledge_documents.router)
 api_router.include_router(quotes.router)
 api_router.include_router(email_drafts.router)
 api_router.include_router(workflows.router)

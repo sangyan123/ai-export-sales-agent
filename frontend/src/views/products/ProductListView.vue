@@ -22,6 +22,7 @@ import type {
 } from '@/types/product'
 import { formatDateTime } from '@/utils/format'
 
+import KnowledgeDocumentPanel from './components/KnowledgeDocumentPanel.vue'
 import PriceListPanel from './components/PriceListPanel.vue'
 import ProductFormDialog from './components/ProductFormDialog.vue'
 import ProductImportPanel from './components/ProductImportPanel.vue'
@@ -267,6 +268,10 @@ onMounted(load)
 
       <el-tab-pane v-if="canReadPricing" label="价格表" name="pricing" lazy>
         <PriceListPanel />
+      </el-tab-pane>
+
+      <el-tab-pane label="知识资料" name="knowledge" lazy>
+        <KnowledgeDocumentPanel />
       </el-tab-pane>
     </el-tabs>
 

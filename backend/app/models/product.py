@@ -1,8 +1,10 @@
+import uuid
+
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import CheckConstraint, Index, Numeric, String, UniqueConstraint, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Numeric, String, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -45,3 +47,42 @@ class Product(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="ACTIVE")
+
+
+class KnowledgeDocument(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
+    __tablename__ = "knowledge_documents"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_knowledge_documents_tenant_id_id"),
+        UniqueConstraint("tenant_id", "object_key", name="uq_knowledge_documents_tenant_object"),
+        CheckConstraint("size_bytes >= 0", name="size_bytes_non_negative"),
+        CheckConstraint(
+            "source IN ('CATALOG', 'PRICE_LIST', 'CERTIFICATE', 'SPEC_SHEET', 'OTHER')",
+            name="source_category",
+        ),
+        CheckConstraint(
+            "parse_status IN ('UPLOADED', 'PARSED', 'FAILED')",
+            name="parse_status",
+        ),
+        Index(
+            "ix_knowledge_documents_tenant_source",
+            "tenant_id",
+            "source",
+        ),
+        Index(
+            "ix_knowledge_documents_tenant_created",
+            "tenant_id",
+            "created_at",
+        ),
+    )
+
+    object_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, server_default="OTHER")
+    description: Mapped[str | None] = mapped_column(String(500))
+    parse_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="UPLOADED")
+    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
