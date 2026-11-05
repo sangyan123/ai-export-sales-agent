@@ -3,6 +3,8 @@
 The fixed annotated dataset must keep critical-field normalized accuracy
 at or above the 90% gate. Known-issue samples are excluded from the gate
 but must remain explicitly flagged so they cannot silently regress.
+As of parser v1.1 all original known issues are fixed; the gate now
+covers the full 30-sample set.
 """
 
 import pytest
@@ -34,7 +36,7 @@ def test_no_gate_sample_failures(report) -> None:
 
 
 def test_known_issues_remain_flagged(report) -> None:
-    expected_known = {"GS-009", "GS-015", "GS-016", "GS-028", "GS-029"}
+    expected_known: set[str] = set()
     flagged = {r.sample_id for r in report.sample_results if r.known_issue}
     assert flagged == expected_known
 

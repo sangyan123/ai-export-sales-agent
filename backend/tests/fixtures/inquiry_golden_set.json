@@ -182,8 +182,6 @@
       "category": "multi_product",
       "language": "en",
       "subject": "Bolts and nuts sourcing",
-      "known_issue": true,
-      "known_issue_note": "Multi-product inquiry; current single-value behavior returns first category. Ideal behavior: split into sub-requirements or flag needs_review.",
       "raw_text": "We are sourcing hex bolts and matching nuts, DIN 933, M10x40mm, SS304, 50000 pcs to Spain.",
       "expected": {
         "product_category": "BOLT",
@@ -310,8 +308,6 @@
       "category": "typo",
       "language": "en",
       "subject": "Stainles steel bolts",
-      "known_issue": true,
-      "known_issue_note": "Misspelled material 'stainles' not tolerated by deterministic matcher; material left empty.",
       "raw_text": "Need stainles steel bolts M10x50mm, 3000 pcs.",
       "expected": {
         "product_category": "BOLT",
@@ -333,8 +329,6 @@
       "category": "typo",
       "language": "en",
       "subject": "Zink plated screws",
-      "known_issue": true,
-      "known_issue_note": "Misspelled 'zink plated' not matched to ZINC_PLATED by deterministic matcher.",
       "raw_text": "Please quote M3x16mm zink plated screws, 10000 pcs.",
       "expected": {
         "product_category": "SCREW",
@@ -587,8 +581,6 @@
       "category": "spec_conflict",
       "language": "en",
       "subject": "Conflicting diameters",
-      "known_issue": true,
-      "known_issue_note": "Two diameters mentioned; first-match wins with no conflict flag. Ideal behavior: raise conflict and route to human review.",
       "raw_text": "M8 bolts but our drawing says M10, DIN 933, quantity 1000 pcs.",
       "expected": {
         "product_category": "BOLT",
@@ -610,8 +602,6 @@
       "category": "decimal_quantity",
       "language": "en",
       "subject": "Weight with decimals",
-      "known_issue": true,
-      "known_issue_note": "Decimal quantity '0.5 kg' parsed as '5 kg'; integer-only quantity regex.",
       "raw_text": "Quote 0.5 kg M2 screws for our repair shop.",
       "expected": {
         "product_category": "SCREW",
@@ -649,5 +639,12 @@
         "packaging": null
       }
     }
-  ]
+  ],
+  "known_issues_resolved": {
+    "GS-009": "MULTI_PRODUCT conflict flag added (single-value category kept)",
+    "GS-015": "fuzzy phrase matching for materials (stainles -> STAINLESS_STEEL)",
+    "GS-016": "fuzzy phrase matching for surfaces (zink plated -> ZINC_PLATED)",
+    "GS-028": "DIAMETER_CONFLICT flag added (first match kept)",
+    "GS-029": "decimal quantities supported (0.5 kg)"
+  }
 }

@@ -1,3 +1,4 @@
+import difflib
 import json
 import logging
 import re
@@ -126,12 +127,35 @@ def _search(pattern: str, text: str) -> re.Match[str] | None:
     return re.search(pattern, text, re.IGNORECASE)
 
 
-def _detect_category(text: str) -> ParsedField:
+def _fuzzy_phrase(text: str, phrase: str, cutoff: float = 0.85) -> bool:
+    """Tolerate common misspellings for multi-word phrases ("zink plated")."""
+    words = re.sub(r"[^a-z ]", " ", text.lower()).split()
+    target_words = phrase.split()
+    n = len(target_words)
+    if len(words) < n:
+        return False
+    for i in range(len(words) - n + 1):
+        window = " ".join(words[i : i + n])
+        if difflib.SequenceMatcher(None, window, phrase).ratio() >= cutoff:
+            return True
+    return False
+
+
+_FUZZY_MATERIAL_PHRASES = ("stainless steel", "carbon steel")
+_FUZZY_SURFACE_PHRASES = ("zinc plated", "black oxide", "hot dip galvanized")
+
+
+def _detect_category(text: str) -> tuple[ParsedField, list[str]]:
+    """First match wins; all distinct categories are collected for conflict flags."""
+    seen: dict[str, str] = {}
+    primary = ParsedField()
     for pattern, canonical in _CATEGORIES:
         match = _search(pattern, text)
         if match:
-            return _field(match, canonical, 0.95)
-    return ParsedField()
+            if not primary.value:
+                primary = _field(match, canonical, 0.95)
+            seen.setdefault(canonical, match.group(0).strip())
+    return primary, list(seen)
 
 
 def _detect_material(text: str) -> ParsedField:
@@ -139,14 +163,26 @@ def _detect_material(text: str) -> ParsedField:
         match = _search(pattern, text)
         if match:
             return _field(match, canonical, 0.95)
+    for phrase in _FUZZY_MATERIAL_PHRASES:
+        if _fuzzy_phrase(text, phrase):
+            return ParsedField(
+                value=phrase,
+                normalized_value="STAINLESS_STEEL" if phrase.startswith("stainless") else "CARBON_STEEL",
+                confidence=0.8,
+                evidence=phrase,
+            )
     return ParsedField()
 
 
-def _detect_diameter(text: str) -> ParsedField:
-    match = _search(r"(?<![a-z0-9])m(\d{1,2}(?:\.\d+)?)(?![\d.])", text)
-    if not match:
-        return ParsedField()
-    return _field(match, f"M{match.group(1)}", 0.95)
+def _detect_diameter(text: str) -> tuple[ParsedField, list[str]]:
+    """First match wins; all distinct diameters are collected for conflict flags."""
+    matches = re.findall(r"(?<![a-z0-9])m(\d{1,2}(?:\.\d+)?)(?![\d.])", text, re.IGNORECASE)
+    if not matches:
+        return ParsedField(), []
+    first = _search(r"(?<![a-z0-9])m(\d{1,2}(?:\.\d+)?)(?![\d.])", text)
+    assert first is not None
+    distinct = [f"M{value}" for value in dict.fromkeys(m.upper() for m in matches)]
+    return _field(first, distinct[0], 0.95), distinct
 
 
 def _detect_length(text: str) -> ParsedField:
@@ -186,6 +222,16 @@ def _detect_surface(text: str) -> ParsedField:
         match = _search(pattern, text)
         if match:
             return _field(match, canonical, 0.9)
+    canonical_map = {
+        "zinc plated": "ZINC_PLATED",
+        "black oxide": "BLACK_OXIDE",
+        "hot dip galvanized": "HDG",
+    }
+    for phrase, canonical in canonical_map.items():
+        if _fuzzy_phrase(text, phrase):
+            return ParsedField(
+                value=phrase, normalized_value=canonical, confidence=0.8, evidence=phrase
+            )
     return ParsedField()
 
 
@@ -199,11 +245,11 @@ def _detect_packaging(text: str) -> ParsedField:
 
 def _detect_quantity(text: str) -> tuple[ParsedField, str | None]:
     match = _search(
-        r"\b(\d{1,3}(?:,\d{3})+|\d+)\s*(pcs|pc|pieces|piece|units|unit|sets|set|kgs|kg)\b",
+        r"\b(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(pcs|pc|pieces|piece|units|unit|sets|set|kgs|kg)\b",
         text,
     )
     if not match:
-        match = _search(r"(\d{1,3}(?:,\d{3})+|\d+)\s*(件|个|只|套|公斤)", text)
+        match = _search(r"(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(件|个|只|套|公斤)", text)
     if not match:
         return ParsedField(), None
     unit = _QUANTITY_UNITS.get(match.group(2).lower(), _QUANTITY_UNITS.get(match.group(2)))
@@ -239,12 +285,14 @@ class DeterministicInquiryParser:
     ) -> InquiryParseResult:
         text = f"{subject}\n{raw_text}".strip()
         quantity, unit = _detect_quantity(text)
+        category, all_categories = _detect_category(text)
+        diameter, all_diameters = _detect_diameter(text)
         result = InquiryParseResult(
-            product_category=_detect_category(text),
+            product_category=category,
             standard_code=_detect_standard(text),
             material=_detect_material(text),
             grade=_detect_grade(text),
-            diameter=_detect_diameter(text),
+            diameter=diameter,
             length=_detect_length(text),
             thread_pitch=_detect_thread_pitch(text),
             surface_finish=_detect_surface(text),
@@ -254,6 +302,24 @@ class DeterministicInquiryParser:
             incoterm=_detect_incoterm(text),
             packaging=_detect_packaging(text),
         )
+        conflicts: list[dict[str, Any]] = []
+        if len(all_categories) > 1:
+            conflicts.append(
+                {
+                    "type": "MULTI_PRODUCT",
+                    "message": "multiple product categories mentioned; first match kept",
+                    "categories": all_categories,
+                }
+            )
+        if len(all_diameters) > 1:
+            conflicts.append(
+                {
+                    "type": "DIAMETER_CONFLICT",
+                    "message": "multiple diameters mentioned; first match kept",
+                    "diameters": all_diameters,
+                }
+            )
+        result.conflicts = conflicts
         confidences = [
             getattr(result, name).confidence for name in FIELD_NAMES if getattr(result, name).value
         ]
