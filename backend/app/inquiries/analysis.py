@@ -154,7 +154,7 @@ class InquiryAnalysisService:
                     total_tokens=usage.total_tokens,
                     duration_ms=usage.duration_ms,
                     status="SUCCESS",
-                    requested_by=run.requested_by,
+                    requested_by_id=run.requested_by,
                     finished_at=datetime.now(UTC),
                 )
             )

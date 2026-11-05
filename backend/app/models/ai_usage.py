@@ -56,7 +56,7 @@ class AIUsageRecord(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="SUCCESS")
     error_code: Mapped[str | None] = mapped_column(String(80))
-    requested_by: Mapped[uuid.UUID | None] = mapped_column(
+    requested_by_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

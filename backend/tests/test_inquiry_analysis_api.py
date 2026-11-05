@@ -305,7 +305,14 @@ async def test_execute_analysis_flags_missing_critical_fields(
 class FailingParser:
     model_id = "failing-parser.v1"
 
-    async def parse(self, *, subject: str, raw_text: str, language: str | None):
+    async def parse(
+        self,
+        *,
+        subject: str,
+        raw_text: str,
+        language: str | None,
+        usage_sink: object = None,
+    ):
         raise ParserError("PROVIDER_UNAVAILABLE", "provider is down")
 
 

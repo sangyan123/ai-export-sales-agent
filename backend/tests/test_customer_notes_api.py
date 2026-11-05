@@ -144,7 +144,7 @@ async def test_create_and_list_notes_chronological(client: AsyncClient, session:
     assert response.status_code == 200
     body = response.json()
     items = body["data"]
-    assert body["total"] == 2
+    assert body["meta"]["total"] == 2
     assert len(items) == 2
     assert items[0]["content"] == "Quoted M8 bolts, waiting for reply"
     assert items[1]["content"] == "First contact via email"
@@ -195,7 +195,7 @@ async def test_delete_note(client: AsyncClient, session: AsyncSession) -> None:
         headers=seed.rep_headers,
     )
     assert response.status_code == 200
-    assert response.json()["total"] == 0
+    assert response.json()["meta"]["total"] == 0
 
 
 async def test_cross_tenant_note_not_visible(client: AsyncClient, session: AsyncSession) -> None:
@@ -203,18 +203,18 @@ async def test_cross_tenant_note_not_visible(client: AsyncClient, session: Async
 
     note = await create_note(client, seed, content="Private note")
 
-    response = await client.get(
-        f"/api/v1/customers/{seed.other_customer.id}/notes/{note['id']}",
-        headers=seed.other_headers,
-    )
-    assert response.status_code in (403, 404)
-
     patch_response = await client.patch(
         f"/api/v1/customers/{seed.other_customer.id}/notes/{note['id']}",
         json={"content": "hijack"},
         headers=seed.other_headers,
     )
-    assert patch_response.status_code in (403, 404)
+    assert patch_response.status_code == 404
+
+    delete_response = await client.delete(
+        f"/api/v1/customers/{seed.other_customer.id}/notes/{note['id']}",
+        headers=seed.other_headers,
+    )
+    assert delete_response.status_code == 404
 
 
 async def test_note_content_validation(client: AsyncClient, session: AsyncSession) -> None:

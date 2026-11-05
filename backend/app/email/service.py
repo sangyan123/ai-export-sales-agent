@@ -122,7 +122,7 @@ class EmailDraftService:
                     total_tokens=usage.total_tokens,
                     duration_ms=usage.duration_ms,
                     status="SUCCESS",
-                    requested_by=None,
+                    requested_by_id=None,
                     finished_at=datetime.now(UTC),
                 )
             )

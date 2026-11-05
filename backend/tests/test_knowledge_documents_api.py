@@ -83,10 +83,10 @@ async def seed_knowledge(session: AsyncSession, slug: str) -> KnowledgeSeed:
     session.add_all([rep, viewer, other_user])
     await session.flush()
 
-    rep_membership = TenantMembership(tenant_id=tenant.id, user_id=rep.id, role_code="SALES_REP")
+    rep_membership = TenantMembership(tenant_id=tenant.id, user_id=rep.id, role_code="SALES_MANAGER")
     viewer_membership = TenantMembership(tenant_id=tenant.id, user_id=viewer.id, role_code="VIEWER")
     other_membership = TenantMembership(
-        tenant_id=other_tenant.id, user_id=other_user.id, role_code="SALES_REP"
+        tenant_id=other_tenant.id, user_id=other_user.id, role_code="SALES_MANAGER"
     )
     session.add_all([rep_membership, viewer_membership, other_membership])
     await session.flush()
@@ -122,7 +122,7 @@ async def test_upload_and_list_documents(client: AsyncClient, session: AsyncSess
     )
     assert listing.status_code == 200
     body = listing.json()
-    assert body["total"] == 1
+    assert body["meta"]["total"] == 1
     assert body["data"][0]["id"] == doc["id"]
 
 
@@ -178,7 +178,7 @@ async def test_delete_document(client: AsyncClient, session: AsyncSession) -> No
     assert delete.status_code == 204
 
     listing = await client.get("/api/v1/knowledge-documents", headers=seed.rep_headers)
-    assert listing.json()["total"] == 0
+    assert listing.json()["meta"]["total"] == 0
 
 
 async def test_tenant_isolation(client: AsyncClient, session: AsyncSession) -> None:
@@ -196,7 +196,7 @@ async def test_tenant_isolation(client: AsyncClient, session: AsyncSession) -> N
         headers=seed.other_headers,
     )
     assert listing.status_code == 200
-    assert listing.json()["total"] == 0
+    assert listing.json()["meta"]["total"] == 0
 
     delete = await client.delete(
         f"/api/v1/knowledge-documents/{doc_id}",
@@ -228,7 +228,7 @@ async def test_filter_by_source_and_search(client: AsyncClient, session: AsyncSe
     )
     assert filtered.status_code == 200
     body = filtered.json()
-    assert body["total"] == 1
+    assert body["meta"]["total"] == 1
     assert body["data"][0]["source"] == "PRICE_LIST"
 
     searched = await client.get(
@@ -237,5 +237,5 @@ async def test_filter_by_source_and_search(client: AsyncClient, session: AsyncSe
         headers=seed.rep_headers,
     )
     assert searched.status_code == 200
-    assert searched.json()["total"] == 1
+    assert searched.json()["meta"]["total"] == 1
     assert searched.json()["data"][0]["filename"] == "catalog.pdf"

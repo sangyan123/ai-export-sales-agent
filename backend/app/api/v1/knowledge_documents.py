@@ -75,7 +75,7 @@ def _document_detail(doc: KnowledgeDocument) -> dict[str, Any]:
         "source": doc.source,
         "description": doc.description,
         "parse_status": doc.parse_status,
-        "uploaded_by": str(doc.uploaded_by) if doc.uploaded_by else None,
+        "uploaded_by": str(doc.uploaded_by_id) if doc.uploaded_by_id else None,
         "created_at": iso_datetime(doc.created_at),
         "updated_at": iso_datetime(doc.updated_at),
     }
@@ -200,7 +200,7 @@ async def upload_document(
         source=source,
         description=(description.strip()[:500] if description and description.strip() else None),
         parse_status="UPLOADED",
-        uploaded_by=context.user_id,
+        uploaded_by_id=context.user_id,
     )
     session.add(doc)
     try:

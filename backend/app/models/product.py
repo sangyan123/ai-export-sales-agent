@@ -83,6 +83,6 @@ class KnowledgeDocument(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
     source: Mapped[str] = mapped_column(String(40), nullable=False, server_default="OTHER")
     description: Mapped[str | None] = mapped_column(String(500))
     parse_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="UPLOADED")
-    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(
+    uploaded_by_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )

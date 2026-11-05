@@ -79,9 +79,9 @@ async def seed_usage(session: AsyncSession, slug: str) -> UsageSeed:
     session.add_all([rep, other_user])
     await session.flush()
 
-    rep_membership = TenantMembership(tenant_id=tenant.id, user_id=rep.id, role_code="SALES_REP")
+    rep_membership = TenantMembership(tenant_id=tenant.id, user_id=rep.id, role_code="SALES_MANAGER")
     other_membership = TenantMembership(
-        tenant_id=other_tenant.id, user_id=other_user.id, role_code="SALES_REP"
+        tenant_id=other_tenant.id, user_id=other_user.id, role_code="SALES_MANAGER"
     )
     session.add_all([rep_membership, other_membership])
     await session.flush()
@@ -143,7 +143,7 @@ async def test_usage_records_list_and_filter(client: AsyncClient, session: Async
     response = await client.get("/api/v1/usage/records", headers=seed.rep_headers)
     assert response.status_code == 200
     body = response.json()
-    assert body["total"] == 2
+    assert body["meta"]["total"] == 2
     assert len(body["data"]) == 2
 
     filtered = await client.get(
@@ -153,7 +153,7 @@ async def test_usage_records_list_and_filter(client: AsyncClient, session: Async
     )
     assert filtered.status_code == 200
     fbody = filtered.json()
-    assert fbody["total"] == 1
+    assert fbody["meta"]["total"] == 1
     assert fbody["data"][0]["operation_type"] == "EMAIL_GENERATE"
     assert fbody["data"][0]["total_tokens"] == 300
 
@@ -180,4 +180,4 @@ async def test_usage_tenant_isolation(client: AsyncClient, session: AsyncSession
 
     records = await client.get("/api/v1/usage/records", headers=seed.other_headers)
     assert records.status_code == 200
-    assert records.json()["total"] == 0
+    assert records.json()["meta"]["total"] == 0

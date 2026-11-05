@@ -32,7 +32,7 @@ def _record_detail(record: AIUsageRecord) -> dict[str, Any]:
         "duration_ms": record.duration_ms,
         "status": record.status,
         "error_code": record.error_code,
-        "requested_by": str(record.requested_by) if record.requested_by else None,
+        "requested_by": str(record.requested_by_id) if record.requested_by_id else None,
         "finished_at": iso_datetime(record.finished_at) if record.finished_at else None,
         "created_at": iso_datetime(record.created_at),
     }
