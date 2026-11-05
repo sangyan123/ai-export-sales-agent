@@ -350,6 +350,18 @@ async function handleCommand(command: string): Promise<void> {
   justify-content: center;
 }
 
+/* 收起态：EP tooltip 触发器默认 padding 0 20px，会把图标挤偏，清零并居中 */
+.sidebar.collapsed .nav-menu :deep(.el-menu-item .el-menu-tooltip__trigger) {
+  width: 100%;
+  justify-content: center;
+  padding: 0 !important;
+}
+/* 收起态：图标强制水平居中，抵消隐藏标题占位导致的偏移 */
+.sidebar.collapsed .nav-menu :deep(.el-menu-item .el-icon),
+.sidebar.collapsed .nav-menu :deep(.el-sub-menu__title > .el-icon) {
+  margin: 0 auto;
+}
+
 .nav-menu .el-menu-item:hover,
 .nav-menu :deep(.el-sub-menu__title:hover) {
   background: rgba(255, 255, 255, 0.07);
@@ -517,3 +529,6 @@ async function handleCommand(command: string): Promise<void> {
   }
 }
 </style>
+
+
+
