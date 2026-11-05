@@ -1,3 +1,4 @@
+from app.models.ai_usage import AIUsageRecord
 from app.models.audit import AuditLog
 from app.models.auth import AuthRefreshToken
 from app.models.customer import Contact, Customer, CustomerNote, CustomerPriceOverride
@@ -14,6 +15,7 @@ from app.models.workflow import WorkflowRun
 
 __all__ = [
     "ApprovalTask",
+    "AIUsageRecord",
     "AuditLog",
     "AuthRefreshToken",
     "Contact",

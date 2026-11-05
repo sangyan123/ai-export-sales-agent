@@ -22,6 +22,7 @@ import {
   INQUIRY_STATUS_LABELS,
   type TagType,
 } from '@/constants/catalog'
+import AiUsagePanel from './components/AiUsagePanel.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { EmailDraft } from '@/types/email'
 import type { InquirySummary } from '@/types/inquiry'
@@ -612,6 +613,8 @@ onMounted(() => {
         </div>
       </el-card>
     </div>
+
+    <AiUsagePanel />
   </section>
 </template>
 

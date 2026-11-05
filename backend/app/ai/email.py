@@ -8,6 +8,7 @@ from typing import Protocol
 import httpx
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from app.ai.usage import LLMUsage, UsageSink, UsageTracker
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -93,7 +94,9 @@ class EmailDraftContent(BaseModel):
 class EmailGenerator(Protocol):
     model_id: str
 
-    async def generate(self, payload: EmailGenerationInput) -> EmailDraftContent: ...
+    async def generate(
+        self, payload: EmailGenerationInput, *, usage_sink: UsageSink | None = None
+    ) -> EmailDraftContent: ...
 
 
 _REQUIREMENT_LABELS = {
@@ -132,7 +135,9 @@ _MISSING_TERM_LABELS = {
 class DeterministicEmailGenerator:
     model_id = "deterministic-email-generator.v1"
 
-    async def generate(self, payload: EmailGenerationInput) -> EmailDraftContent:
+    async def generate(
+        self, payload: EmailGenerationInput, *, usage_sink: UsageSink | None = None
+    ) -> EmailDraftContent:
         if not payload.language.lower().startswith("en"):
             raise EmailGenerationError(
                 EmailGenerationErrorCode.UNSUPPORTED_LANGUAGE,
@@ -225,7 +230,9 @@ class OpenAICompatibleEmailGenerator:
         self._max_input_chars = max_input_chars
         self._transport = transport
 
-    async def generate(self, payload: EmailGenerationInput) -> EmailDraftContent:
+    async def generate(
+        self, payload: EmailGenerationInput, *, usage_sink: UsageSink | None = None
+    ) -> EmailDraftContent:
         input_payload = asdict(payload)
         input_payload["inquiry_raw_body"] = (payload.inquiry_raw_body or "")[:4000]
         user_content = json.dumps(input_payload, ensure_ascii=False)[: self._max_input_chars]
@@ -234,14 +241,28 @@ class OpenAICompatibleEmailGenerator:
             {"role": "user", "content": user_content},
         ]
         last_error = "unknown"
+        tracker = UsageTracker()
         async with httpx.AsyncClient(
             timeout=self._timeout_seconds,
             transport=self._transport,
         ) as client:
             for attempt in range(2):
-                content = await self._request(client, messages)
+                content, raw_usage = await self._request(client, messages)
+                if raw_usage is not None:
+                    tracker.mark_usage(
+                        LLMUsage(
+                            model_id=self.model_id,
+                            prompt_tokens=raw_usage.get("prompt_tokens", 0),
+                            completion_tokens=raw_usage.get("completion_tokens", 0),
+                            total_tokens=raw_usage.get("total_tokens", 0),
+                            duration_ms=tracker.elapsed_ms,
+                        )
+                    )
                 try:
-                    return EmailDraftContent.model_validate(json.loads(_strip_code_fence(content)))
+                    result = EmailDraftContent.model_validate(json.loads(_strip_code_fence(content)))
+                    if usage_sink is not None and tracker.usage is not None:
+                        await usage_sink(tracker.usage)
+                    return result
                 except (json.JSONDecodeError, ValidationError) as exc:
                     last_error = str(exc)
                     logger.warning(
@@ -258,7 +279,9 @@ class OpenAICompatibleEmailGenerator:
             f"LLM returned invalid structured output: {last_error}",
         )
 
-    async def _request(self, client: httpx.AsyncClient, messages: list[dict[str, str]]) -> str:
+    async def _request(
+        self, client: httpx.AsyncClient, messages: list[dict[str, str]]
+    ) -> tuple[str, dict[str, int] | None]:
         try:
             response = await client.post(
                 f"{self._base_url}/chat/completions",
@@ -292,7 +315,8 @@ class OpenAICompatibleEmailGenerator:
                 EmailGenerationErrorCode.INVALID_OUTPUT,
                 "LLM response content is empty",
             )
-        return content
+        usage = response.json().get("usage")
+        return _strip_code_fence(content), usage
 
 
 def _format_item(index: int, item: EmailQuoteItem, currency: str) -> list[str]:

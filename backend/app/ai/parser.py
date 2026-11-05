@@ -7,6 +7,7 @@ import httpx
 from pydantic import ValidationError
 
 from app.ai.schemas import FIELD_NAMES, InquiryParseResult, ParsedField
+from app.ai.usage import LLMUsage, UsageSink, UsageTracker
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,12 @@ class InquiryParser(Protocol):
     model_id: str
 
     async def parse(
-        self, *, subject: str, raw_text: str, language: str | None
+        self,
+        *,
+        subject: str,
+        raw_text: str,
+        language: str | None,
+        usage_sink: UsageSink | None = None,
     ) -> InquiryParseResult: ...
 
 
@@ -224,7 +230,12 @@ class DeterministicInquiryParser:
     model_id = "deterministic-inquiry-parser.v1"
 
     async def parse(
-        self, *, subject: str, raw_text: str, language: str | None
+        self,
+        *,
+        subject: str,
+        raw_text: str,
+        language: str | None,
+        usage_sink: UsageSink | None = None,
     ) -> InquiryParseResult:
         text = f"{subject}\n{raw_text}".strip()
         quantity, unit = _detect_quantity(text)
@@ -299,7 +310,12 @@ class OpenAICompatibleInquiryParser:
         self._transport = transport
 
     async def parse(
-        self, *, subject: str, raw_text: str, language: str | None
+        self,
+        *,
+        subject: str,
+        raw_text: str,
+        language: str | None,
+        usage_sink: UsageSink | None = None,
     ) -> InquiryParseResult:
         payload = {
             "subject": subject,
@@ -311,14 +327,28 @@ class OpenAICompatibleInquiryParser:
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ]
         last_error = "unknown"
+        tracker = UsageTracker()
         async with httpx.AsyncClient(
             timeout=self._timeout_seconds,
             transport=self._transport,
         ) as client:
             for attempt in range(2):
-                content = await self._request(client, messages)
+                content, raw_usage = await self._request(client, messages)
+                if raw_usage is not None:
+                    tracker.mark_usage(
+                        LLMUsage(
+                            model_id=self.model_id,
+                            prompt_tokens=raw_usage.get("prompt_tokens", 0),
+                            completion_tokens=raw_usage.get("completion_tokens", 0),
+                            total_tokens=raw_usage.get("total_tokens", 0),
+                            duration_ms=tracker.elapsed_ms,
+                        )
+                    )
                 try:
-                    return InquiryParseResult.model_validate(json.loads(content))
+                    result = InquiryParseResult.model_validate(json.loads(content))
+                    if usage_sink is not None and tracker.usage is not None:
+                        await usage_sink(tracker.usage)
+                    return result
                 except (json.JSONDecodeError, ValidationError) as exc:
                     last_error = str(exc)
                     logger.warning("invalid LLM output on attempt %s: %s", attempt + 1, last_error)
@@ -330,7 +360,9 @@ class OpenAICompatibleInquiryParser:
                     ]
         raise ParserError("INVALID_OUTPUT", f"LLM returned invalid structured output: {last_error}")
 
-    async def _request(self, client: httpx.AsyncClient, messages: list[dict[str, str]]) -> str:
+    async def _request(
+        self, client: httpx.AsyncClient, messages: list[dict[str, str]]
+    ) -> tuple[str, dict[str, int] | None]:
         try:
             response = await client.post(
                 f"{self._base_url}/chat/completions",
@@ -355,7 +387,8 @@ class OpenAICompatibleInquiryParser:
             raise ParserError("INVALID_OUTPUT", "LLM response is missing message content") from exc
         if not isinstance(content, str) or not content.strip():
             raise ParserError("INVALID_OUTPUT", "LLM response content is empty")
-        return _strip_code_fence(content)
+        usage = response.json().get("usage")
+        return _strip_code_fence(content), usage
 
 
 def _strip_code_fence(content: str) -> str:

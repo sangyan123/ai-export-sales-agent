@@ -8,10 +8,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import InquiryParser, InquiryParseResult, ParserError, get_inquiry_parser
+from app.ai.usage import LLMUsage
 from app.audit import AuditService
+from app.core.config import settings
 from app.db.session import SessionFactory
 from app.db.tenant import set_tenant_context
 from app.inquiries import InquiryStatus
+from app.models.ai_usage import AIUsageRecord
 from app.models.inquiry import Inquiry, InquiryRequirement
 from app.models.workflow import WorkflowRun
 from app.workflows import WorkflowStatus
@@ -109,9 +112,19 @@ class InquiryAnalysisService:
         if language is not None:
             language = str(language)
 
+        captured: list[LLMUsage] = []
+
+        async def usage_sink(usage: LLMUsage) -> None:
+            captured.append(usage)
+
         try:
             parser = self._parser or get_inquiry_parser()
-            result = await parser.parse(subject=subject, raw_text=raw_text, language=language)
+            result = await parser.parse(
+                subject=subject,
+                raw_text=raw_text,
+                language=language,
+                usage_sink=usage_sink,
+            )
         except ParserError as exc:
             logger.warning("inquiry analysis %s failed: %s", run_id, exc.message)
             return await self._fail(tenant_id, run_id, exc.code, exc.message)
@@ -119,6 +132,25 @@ class InquiryAnalysisService:
             logger.exception("inquiry analysis %s raised an unexpected error", run_id)
             return await self._fail(
                 tenant_id, run_id, "ANALYSIS_FAILED", "unexpected analysis failure"
+            )
+
+        if captured:
+            usage = captured[-1]
+            self._session.add(
+                AIUsageRecord(
+                    tenant_id=tenant_id,
+                    workflow_run_id=run_id,
+                    operation_type="INQUIRY_PARSE",
+                    model_id=usage.model_id,
+                    provider=settings.llm_provider or "deterministic",
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                    total_tokens=usage.total_tokens,
+                    duration_ms=usage.duration_ms,
+                    status="SUCCESS",
+                    requested_by=run.requested_by,
+                    finished_at=datetime.now(UTC),
+                )
             )
 
         return await self._complete(

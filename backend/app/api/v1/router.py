@@ -14,6 +14,7 @@ from app.api.v1 import (
     products,
     quotes,
     tenants,
+    usage,
     workflows,
 )
 
@@ -31,4 +32,5 @@ api_router.include_router(knowledge_documents.router)
 api_router.include_router(quotes.router)
 api_router.include_router(email_drafts.router)
 api_router.include_router(workflows.router)
+api_router.include_router(usage.router)
 api_router.include_router(audit.router)

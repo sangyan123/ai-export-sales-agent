@@ -14,10 +14,13 @@ from app.ai.email import (
     EmailQuoteItem,
     get_email_generator,
 )
+from app.ai.usage import LLMUsage
+from app.core.config import settings
 from app.db.tenant import set_tenant_context
 from app.email import EmailError, EmailErrorCode, EmailStatus
 from app.inquiries.requirements import requirement_values
 from app.models.customer import Customer
+from app.models.ai_usage import AIUsageRecord
 from app.models.email import EmailDraft
 from app.models.inquiry import Inquiry, InquiryRequirement
 from app.models.quote import Quote, QuoteItem
@@ -88,12 +91,35 @@ class EmailDraftService:
             language=language.lower(),
         )
         generator = self._generator or get_email_generator()
+        captured: list[LLMUsage] = []
+
+        async def usage_sink(usage: LLMUsage) -> None:
+            captured.append(usage)
+
         try:
-            content = await generator.generate(generation_input)
+            content = await generator.generate(generation_input, usage_sink=usage_sink)
         except EmailGenerationError as exc:
             if exc.code is EmailGenerationErrorCode.UNSUPPORTED_LANGUAGE:
                 raise EmailError(EmailErrorCode.EMAIL_UNSUPPORTED_LANGUAGE, exc.message) from exc
             raise
+
+        if captured:
+            usage = captured[-1]
+            self._session.add(
+                AIUsageRecord(
+                    tenant_id=tenant_id,
+                    operation_type="EMAIL_GENERATE",
+                    model_id=usage.model_id,
+                    provider=settings.llm_provider or "deterministic",
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                    total_tokens=usage.total_tokens,
+                    duration_ms=usage.duration_ms,
+                    status="SUCCESS",
+                    requested_by=None,
+                    finished_at=datetime.now(UTC),
+                )
+            )
 
         draft = EmailDraft(
             tenant_id=tenant_id,
