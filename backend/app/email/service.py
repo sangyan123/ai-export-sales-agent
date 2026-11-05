@@ -20,6 +20,7 @@ from app.db.tenant import set_tenant_context
 from app.email import EmailError, EmailErrorCode, EmailStatus
 from app.inquiries.requirements import requirement_values
 from app.models.customer import Customer
+from app.models.ai_provider import TenantAIProviderConfig
 from app.models.ai_usage import AIUsageRecord
 from app.models.email import EmailDraft
 from app.models.inquiry import Inquiry, InquiryRequirement
@@ -90,7 +91,12 @@ class EmailDraftService:
             items=tuple(_item_input(item) for item in items),
             language=language.lower(),
         )
-        generator = self._generator or get_email_generator()
+        tenant_config = await self._session.scalar(
+            select(TenantAIProviderConfig).where(
+                TenantAIProviderConfig.tenant_id == tenant_id
+            )
+        )
+        generator = self._generator or get_email_generator(tenant_config)
         captured: list[LLMUsage] = []
 
         async def usage_sink(usage: LLMUsage) -> None:

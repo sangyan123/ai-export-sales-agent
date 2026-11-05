@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 from pydantic import ValidationError
@@ -403,7 +403,17 @@ def _strip_code_fence(content: str) -> str:
     return "\n".join(lines).strip()
 
 
-def get_inquiry_parser() -> InquiryParser:
+def get_inquiry_parser(tenant_config: Any | None = None) -> InquiryParser:
+    if tenant_config is not None and getattr(tenant_config, "enabled", False):
+        from app.core.encryption import decrypt_api_key
+
+        return OpenAICompatibleInquiryParser(
+            api_key=decrypt_api_key(tenant_config.encrypted_api_key),
+            base_url=tenant_config.base_url or "https://api.openai.com/v1",
+            model=tenant_config.model_id or settings.llm_model,
+            timeout_seconds=settings.llm_timeout_seconds,
+            max_input_chars=settings.llm_max_input_chars,
+        )
     provider = (settings.llm_provider or "fake").strip().lower()
     if provider in {"fake", "deterministic"}:
         return DeterministicInquiryParser()

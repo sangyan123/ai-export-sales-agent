@@ -3,7 +3,7 @@ import logging
 from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 from pydantic import BaseModel, Field, ValidationError, field_validator
@@ -404,7 +404,17 @@ _REPAIR_PROMPT = (
 )
 
 
-def get_email_generator() -> EmailGenerator:
+def get_email_generator(tenant_config: Any | None = None) -> EmailGenerator:
+    if tenant_config is not None and getattr(tenant_config, "enabled", False):
+        from app.core.encryption import decrypt_api_key
+
+        return OpenAICompatibleEmailGenerator(
+            api_key=decrypt_api_key(tenant_config.encrypted_api_key),
+            base_url=tenant_config.base_url or "https://api.openai.com/v1",
+            model=tenant_config.model_id or settings.llm_model,
+            timeout_seconds=settings.llm_timeout_seconds,
+            max_input_chars=settings.llm_max_input_chars,
+        )
     provider = (settings.llm_provider or "fake").strip().lower()
     if provider in {"fake", "deterministic"}:
         return DeterministicEmailGenerator()

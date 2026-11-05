@@ -13,6 +13,7 @@ import {
   TENANT_STATUS_LABELS,
   TENANT_STATUS_TAG,
 } from '@/constants/settings'
+import AIProviderPanel from './components/AIProviderPanel.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { TenantProfile, TenantProfileUpdatePayload } from '@/types/tenant'
 import { formatDateTime } from '@/utils/format'
@@ -246,6 +247,7 @@ onMounted(load)
       </el-form>
       <p class="updated-at">最后更新：{{ formatDateTime(profile?.updated_at) }}</p>
     </el-card>
+  <AIProviderPanel />
   </section>
 </template>
 

@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.db.session import SessionFactory
 from app.db.tenant import set_tenant_context
 from app.inquiries import InquiryStatus
+from app.models.ai_provider import TenantAIProviderConfig
 from app.models.ai_usage import AIUsageRecord
 from app.models.inquiry import Inquiry, InquiryRequirement
 from app.models.workflow import WorkflowRun
@@ -118,7 +119,12 @@ class InquiryAnalysisService:
             captured.append(usage)
 
         try:
-            parser = self._parser or get_inquiry_parser()
+            tenant_config = await self._session.scalar(
+                select(TenantAIProviderConfig).where(
+                    TenantAIProviderConfig.tenant_id == tenant_id
+                )
+            )
+            parser = self._parser or get_inquiry_parser(tenant_config)
             result = await parser.parse(
                 subject=subject,
                 raw_text=raw_text,

@@ -29,3 +29,34 @@ export interface TenantProfileUpdatePayload {
   default_currency?: string
   default_language?: string
 }
+
+export interface AIProviderConfig {
+  provider: string | null
+  api_key_hint: string | null
+  api_key_set: boolean
+  base_url: string | null
+  model_id: string | null
+  enabled: boolean
+  last_test_at: string | null
+  last_test_status: 'SUCCESS' | 'FAILED' | null
+  last_test_message: string | null
+  updated_at: string | null
+  env_fallback?: {
+    provider: string | null
+    model_id: string | null
+  }
+}
+
+export interface AIProviderUpdatePayload {
+  provider: string
+  api_key?: string | null
+  base_url?: string | null
+  model_id?: string | null
+  enabled?: boolean
+}
+
+export interface AIProviderTestResult {
+  status: 'SUCCESS' | 'FAILED'
+  message: string
+  tested_at: string
+}
