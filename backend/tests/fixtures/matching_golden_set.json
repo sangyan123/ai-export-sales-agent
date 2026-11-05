@@ -1,0 +1,260 @@
+{
+  "version": "matching-golden-set.v1.0",
+  "description": "Annotated product-matching dataset per acceptance doc section 5.2. Each sample carries requirement values (as produced by requirement_values) and the annotated correct product(s) from the fixture catalog. Gate: top3_hit_rate >= 0.85 and hard-conflict-EXACT count == 0.",
+  "catalog": [
+    {
+      "product_code": "BOLT-M8-40-SS304-ZINC",
+      "product_name": "外六角螺栓 DIN933 M8x40 SS304 镀锌",
+      "category": "BOLT",
+      "standard_code": "DIN 933",
+      "material": "SS304",
+      "grade": "A2-70",
+      "diameter": "M8",
+      "length": "40mm",
+      "surface_finish": "ZINC_PLATED",
+      "sales_unit": "PCS"
+    },
+    {
+      "product_code": "BOLT-M8-40-SS316-PLAIN",
+      "product_name": "外六角螺栓 DIN933 M8x40 SS316 本色",
+      "category": "BOLT",
+      "standard_code": "DIN 933",
+      "material": "SS316",
+      "grade": "A4-80",
+      "diameter": "M8",
+      "length": "40mm",
+      "surface_finish": "PLAIN",
+      "sales_unit": "PCS"
+    },
+    {
+      "product_code": "BOLT-M10-50-CARBON-HDG",
+      "product_name": "外六角螺栓 DIN933 M10x50 碳钢 8.8 热镀锌",
+      "category": "BOLT",
+      "standard_code": "DIN 933",
+      "material": "CARBON_STEEL",
+      "grade": "8.8",
+      "diameter": "M10",
+      "length": "50mm",
+      "surface_finish": "HDG",
+      "sales_unit": "PCS"
+    },
+    {
+      "product_code": "NUT-M8-SS304-ZINC",
+      "product_name": "六角螺母 DIN934 M8 SS304 镀锌",
+      "category": "NUT",
+      "standard_code": "DIN 934",
+      "material": "SS304",
+      "diameter": "M8",
+      "surface_finish": "ZINC_PLATED",
+      "sales_unit": "PCS"
+    },
+    {
+      "product_code": "NUT-M10-SS316-PLAIN",
+      "product_name": "六角螺母 DIN934 M10 SS316 本色",
+      "category": "NUT",
+      "standard_code": "DIN 934",
+      "material": "SS316",
+      "diameter": "M10",
+      "surface_finish": "PLAIN",
+      "sales_unit": "PCS"
+    },
+    {
+      "product_code": "NUT-M12-CARBON-HDG",
+      "product_name": "六角螺母 DIN934 M12 碳钢 8.8 热镀锌",
+      "category": "NUT",
+      "standard_code": "DIN 934",
+      "material": "CARBON_STEEL",
+      "grade": "8.8",
+      "diameter": "M12",
+      "surface_finish": "HDG",
+      "sales_unit": "PCS"
+    },
+    {
+      "product_code": "SCREW-M4-16-CARBON-ZINC",
+      "product_name": "自攻螺钉 DIN7982 M4x16 碳钢 镀锌",
+      "category": "SCREW",
+      "standard_code": "DIN 7982",
+      "material": "CARBON_STEEL",
+      "grade": "8.8",
+      "diameter": "M4",
+      "length": "16mm",
+      "surface_finish": "ZINC_PLATED",
+      "sales_unit": "PCS"
+    },
+    {
+      "product_code": "SCREW-M3-16-SS304-PLAIN",
+      "product_name": "自攻螺钉 DIN7982 M3x16 SS304 本色",
+      "category": "SCREW",
+      "standard_code": "DIN 7982",
+      "material": "SS304",
+      "diameter": "M3",
+      "length": "16mm",
+      "surface_finish": "PLAIN",
+      "sales_unit": "PCS"
+    },
+    {
+      "product_code": "WASHER-M8-SS304-PLAIN",
+      "product_name": "平垫圈 DIN125 M8 SS304 本色",
+      "category": "WASHER",
+      "standard_code": "DIN 125",
+      "material": "SS304",
+      "diameter": "M8",
+      "surface_finish": "PLAIN",
+      "sales_unit": "PCS"
+    },
+    {
+      "product_code": "WASHER-M10-SS316-ZINC",
+      "product_name": "平垫圈 DIN125 M10 SS316 镀锌",
+      "category": "WASHER",
+      "standard_code": "DIN 125",
+      "material": "SS316",
+      "diameter": "M10",
+      "surface_finish": "ZINC_PLATED",
+      "sales_unit": "PCS"
+    },
+    {
+      "product_code": "STUD-M16-120-CARBON-BLACK",
+      "product_name": "双头螺柱 DIN976 M16x120 碳钢 10.9 发黑",
+      "category": "STUD",
+      "standard_code": "DIN 976",
+      "material": "CARBON_STEEL",
+      "grade": "10.9",
+      "diameter": "M16",
+      "length": "120mm",
+      "surface_finish": "BLACK_OXIDE",
+      "sales_unit": "PCS"
+    }
+  ],
+  "samples": [
+    {
+      "id": "MT-001",
+      "description": "Full-spec bolt, exact catalog product",
+      "values": {
+        "product_category": "BOLT",
+        "standard_code": "DIN 933",
+        "material": "SS304",
+        "diameter": "M8",
+        "length": "40mm",
+        "surface_finish": "ZINC_PLATED",
+        "quantity": "10000"
+      },
+      "expected_top1": "BOLT-M8-40-SS304-ZINC"
+    },
+    {
+      "id": "MT-002",
+      "description": "Material variant, surface unspecified (must not conflict)",
+      "values": {
+        "product_category": "BOLT",
+        "standard_code": "DIN 933",
+        "material": "SS316",
+        "diameter": "M8",
+        "length": "40mm",
+        "quantity": "8000"
+      },
+      "expected_top1": "BOLT-M8-40-SS316-PLAIN"
+    },
+    {
+      "id": "MT-003",
+      "description": "Carbon bolt with grade",
+      "values": {
+        "product_category": "BOLT",
+        "standard_code": "DIN 933",
+        "material": "CARBON_STEEL",
+        "grade": "8.8",
+        "diameter": "M10",
+        "length": "50mm",
+        "surface_finish": "HDG",
+        "quantity": "5000"
+      },
+      "expected_top1": "BOLT-M10-50-CARBON-HDG"
+    },
+    {
+      "id": "MT-004",
+      "description": "Stainless nut",
+      "values": {
+        "product_category": "NUT",
+        "standard_code": "DIN 934",
+        "material": "SS316",
+        "diameter": "M10",
+        "quantity": "40000"
+      },
+      "expected_top1": "NUT-M10-SS316-PLAIN"
+    },
+    {
+      "id": "MT-005",
+      "description": "Carbon screw full spec",
+      "values": {
+        "product_category": "SCREW",
+        "standard_code": "DIN 7982",
+        "material": "CARBON_STEEL",
+        "diameter": "M4",
+        "length": "16mm",
+        "surface_finish": "ZINC_PLATED",
+        "quantity": "200000"
+      },
+      "expected_top1": "SCREW-M4-16-CARBON-ZINC"
+    },
+    {
+      "id": "MT-006",
+      "description": "Plain washer, minimal spec (material+size)",
+      "values": {
+        "product_category": "WASHER",
+        "material": "SS304",
+        "diameter": "M8",
+        "quantity": "100000"
+      },
+      "expected_top1": "WASHER-M8-SS304-PLAIN"
+    },
+    {
+      "id": "MT-007",
+      "description": "High-strength stud full spec",
+      "values": {
+        "product_category": "STUD",
+        "standard_code": "DIN 976",
+        "material": "CARBON_STEEL",
+        "grade": "10.9",
+        "diameter": "M16",
+        "length": "120mm",
+        "surface_finish": "BLACK_OXIDE",
+        "quantity": "3000"
+      },
+      "expected_top1": "STUD-M16-120-CARBON-BLACK"
+    },
+    {
+      "id": "MT-008",
+      "description": "Partial spec bolt: material + diameter only",
+      "values": {
+        "product_category": "BOLT",
+        "material": "SS304",
+        "diameter": "M8",
+        "quantity": "6000"
+      },
+      "expected_top3": ["BOLT-M8-40-SS304-ZINC", "BOLT-M8-40-SS316-PLAIN"]
+    },
+    {
+      "id": "MT-009",
+      "description": "Hard conflict: asks SS316 zinc but catalog SS316 is plain and zinc is SS304",
+      "values": {
+        "product_category": "BOLT",
+        "standard_code": "DIN 933",
+        "material": "SS316",
+        "diameter": "M8",
+        "length": "40mm",
+        "surface_finish": "ZINC_PLATED",
+        "quantity": "7000"
+      },
+      "expected_conflict": true
+    },
+    {
+      "id": "MT-010",
+      "description": "No applicable product: oversized washer not in catalog",
+      "values": {
+        "product_category": "WASHER",
+        "material": "SS304",
+        "diameter": "M20",
+        "quantity": "5000"
+      },
+      "expect_no_exact": true
+    }
+  ]
+}
