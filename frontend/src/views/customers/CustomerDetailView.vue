@@ -15,6 +15,7 @@ import ContactPanel from './components/ContactPanel.vue'
 import CustomerFollowupPanel from './components/CustomerFollowupPanel.vue'
 import CustomerFormDialog from './components/CustomerFormDialog.vue'
 import CustomerInquiryPanel from './components/CustomerInquiryPanel.vue'
+import CustomerNotePanel from './components/CustomerNotePanel.vue'
 import PriceOverridePanel from './components/PriceOverridePanel.vue'
 
 const route = useRoute()
@@ -129,6 +130,9 @@ watch(
         <el-tabs v-model="activeTab">
           <el-tab-pane label="联系人" name="contacts">
             <ContactPanel :customer-id="customer.id" />
+          </el-tab-pane>
+          <el-tab-pane label="备注" name="notes">
+            <CustomerNotePanel :customer-id="customer.id" />
           </el-tab-pane>
           <el-tab-pane label="专属价" name="pricing">
             <PriceOverridePanel :customer-id="customer.id" />

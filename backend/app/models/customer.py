@@ -12,6 +12,7 @@ from sqlalchemy import (
     Index,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
     text,
 )
@@ -142,3 +143,23 @@ class CustomerPriceOverride(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Ba
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CustomerNote(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
+    __tablename__ = "customer_notes"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_customer_notes_tenant_id_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "customer_id"],
+            ["customers.tenant_id", "customers.id"],
+            name="fk_customer_notes_tenant_customer",
+            ondelete="CASCADE",
+        ),
+        Index("ix_customer_notes_tenant_customer_created", "tenant_id", "customer_id", "created_at"),
+    )
+
+    customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    author_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)

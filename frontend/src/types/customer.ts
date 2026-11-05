@@ -79,3 +79,16 @@ export interface PriceOverridePayload {
   valid_from: string
   valid_to?: string | null
 }
+
+export interface CustomerNote {
+  id: string
+  customer_id: string
+  author_id: string | null
+  content: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CustomerNotePayload {
+  content: string
+}

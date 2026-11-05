@@ -5,6 +5,8 @@ import type {
   ContactPayload,
   Customer,
   CustomerListParams,
+  CustomerNote,
+  CustomerNotePayload,
   CustomerPayload,
   PriceOverride,
   PriceOverridePayload,
@@ -66,4 +68,23 @@ export function rejectPriceOverride(customerId: string, overrideId: string) {
   return getData<PriceOverride>(`/customers/${customerId}/price-overrides/${overrideId}/reject`, {
     method: 'post',
   })
+}
+
+export function fetchNotes(customerId: string, params: { page?: number; page_size?: number } = {}) {
+  return getEnvelope<CustomerNote[]>(`/customers/${customerId}/notes`, { params })
+}
+
+export function createNote(customerId: string, payload: CustomerNotePayload) {
+  return getData<CustomerNote>(`/customers/${customerId}/notes`, { method: 'post', data: payload })
+}
+
+export function updateNote(customerId: string, noteId: string, payload: CustomerNotePayload) {
+  return getData<CustomerNote>(`/customers/${customerId}/notes/${noteId}`, {
+    method: 'patch',
+    data: payload,
+  })
+}
+
+export function deleteNote(customerId: string, noteId: string) {
+  return getData<void>(`/customers/${customerId}/notes/${noteId}`, { method: 'delete' })
 }

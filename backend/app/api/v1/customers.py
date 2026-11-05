@@ -16,7 +16,7 @@ from app.api.errors import ApiError
 from app.core.permissions import Permission
 from app.db.session import commit_or_rollback
 from app.db.tenant import set_tenant_context
-from app.models.customer import Contact, Customer, CustomerPriceOverride
+from app.models.customer import Contact, Customer, CustomerNote, CustomerPriceOverride
 from app.models.product import Product
 from app.models.tenant import TenantMembership
 
@@ -741,3 +741,141 @@ async def reject_price_override(
     await session.refresh(override)
     await commit_or_rollback(session)
     return envelope(_override_detail(override), context)
+
+# ---------------------------------------------------------------------------
+# Customer Notes (备注 / 时间线)
+# ---------------------------------------------------------------------------
+
+
+class NoteCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=5000)
+
+    @field_validator("content")
+    @classmethod
+    def strip_content(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
+
+
+class NoteUpdate(BaseModel):
+    content: str = Field(min_length=1, max_length=5000)
+
+    @field_validator("content")
+    @classmethod
+    def strip_content(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
+
+
+def _note_detail(note: CustomerNote) -> dict[str, Any]:
+    return {
+        "id": str(note.id),
+        "customer_id": str(note.customer_id),
+        "author_id": str(note.author_id) if note.author_id else None,
+        "content": note.content,
+        "created_at": iso_datetime(note.created_at),
+        "updated_at": iso_datetime(note.updated_at),
+    }
+
+
+async def _get_note(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    customer_id: uuid.UUID,
+    note_id: uuid.UUID,
+) -> CustomerNote:
+    note = await session.scalar(
+        select(CustomerNote).where(
+            CustomerNote.tenant_id == tenant_id,
+            CustomerNote.customer_id == customer_id,
+            CustomerNote.id == note_id,
+        )
+    )
+    if note is None:
+        raise ApiError(404, "NOTE_NOT_FOUND", "customer note not found")
+    return note
+
+
+@router.get("/customers/{customer_id}/notes")
+async def list_notes(
+    customer_id: uuid.UUID,
+    context: CustomerReadContext,
+    session: SessionDep,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> dict[str, Any]:
+    await _get_customer(session, context.tenant_id, customer_id)
+    conditions = [
+        CustomerNote.tenant_id == context.tenant_id,
+        CustomerNote.customer_id == customer_id,
+    ]
+    total = await session.scalar(select(func.count()).select_from(CustomerNote).where(*conditions))
+    notes = list(
+        await session.scalars(
+            select(CustomerNote)
+            .where(*conditions)
+            .order_by(CustomerNote.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    )
+    return envelope(
+        [_note_detail(note) for note in notes],
+        context,
+        page=page,
+        page_size=page_size,
+        total=int(total or 0),
+    )
+
+
+@router.post("/customers/{customer_id}/notes", status_code=status.HTTP_201_CREATED)
+async def create_note(
+    customer_id: uuid.UUID,
+    payload: NoteCreate,
+    context: CustomerUpdateContext,
+    session: SessionDep,
+) -> dict[str, Any]:
+    await _get_customer(session, context.tenant_id, customer_id)
+    note = CustomerNote(
+        tenant_id=context.tenant_id,
+        customer_id=customer_id,
+        author_id=context.user_id,
+        content=payload.content,
+    )
+    session.add(note)
+    await session.flush()
+    await session.refresh(note)
+    await commit_or_rollback(session)
+    return envelope(_note_detail(note), context)
+
+
+@router.patch("/customers/{customer_id}/notes/{note_id}")
+async def update_note(
+    customer_id: uuid.UUID,
+    note_id: uuid.UUID,
+    payload: NoteUpdate,
+    context: CustomerUpdateContext,
+    session: SessionDep,
+) -> dict[str, Any]:
+    note = await _get_note(session, context.tenant_id, customer_id, note_id)
+    note.content = payload.content
+    await session.flush()
+    await session.refresh(note)
+    await commit_or_rollback(session)
+    return envelope(_note_detail(note), context)
+
+
+@router.delete("/customers/{customer_id}/notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_note(
+    customer_id: uuid.UUID,
+    note_id: uuid.UUID,
+    context: CustomerUpdateContext,
+    session: SessionDep,
+) -> None:
+    note = await _get_note(session, context.tenant_id, customer_id, note_id)
+    await session.delete(note)
+    await commit_or_rollback(session)

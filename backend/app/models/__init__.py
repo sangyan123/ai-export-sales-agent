@@ -1,6 +1,6 @@
 from app.models.audit import AuditLog
 from app.models.auth import AuthRefreshToken
-from app.models.customer import Contact, Customer, CustomerPriceOverride
+from app.models.customer import Contact, Customer, CustomerNote, CustomerPriceOverride
 from app.models.email import EmailDraft
 from app.models.followup import FollowupTask
 from app.models.inquiry import Inquiry, InquiryAttachment, InquiryMessage, InquiryRequirement
@@ -19,6 +19,7 @@ __all__ = [
     "Contact",
     "Customer",
     "CustomerPriceOverride",
+    "CustomerNote",
     "EmailDraft",
     "FollowupTask",
     "Inquiry",
