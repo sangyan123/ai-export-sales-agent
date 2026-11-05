@@ -45,7 +45,7 @@ def _field(
 
 
 _CATEGORIES: tuple[tuple[str, str], ...] = (
-    (r"bolts?", "BOLT"),
+    (r"bolts?|螺栓", "BOLT"),
     (r"螺母", "NUT"),
     (r"nuts?", "NUT"),
     (r"垫圈", "WASHER"),
