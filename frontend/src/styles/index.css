@@ -250,3 +250,34 @@ button {
 .el-descriptions__label {
   color: #8a97ad;
 }
+
+/* ------------------------------------------------------------
+   Collapsed sidebar popup menus (teleported to body)
+   ------------------------------------------------------------ */
+.el-menu--vertical .el-menu--popup {
+  min-width: 168px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #12253f, #0d1a30);
+  box-shadow: 0 12px 32px rgba(8, 18, 38, 0.4);
+}
+
+.el-menu--vertical .el-menu--popup .el-menu-item {
+  height: 38px;
+  margin: 2px 0;
+  border-radius: 8px;
+  color: #a7b6d3;
+  line-height: 38px;
+}
+
+.el-menu--vertical .el-menu--popup .el-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e8f0ff;
+}
+
+.el-menu--vertical .el-menu--popup .el-menu-item.is-active {
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.32), rgba(59, 130, 246, 0.14));
+  color: #fff;
+  font-weight: 600;
+}

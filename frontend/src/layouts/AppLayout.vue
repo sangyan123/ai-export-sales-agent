@@ -9,7 +9,9 @@ import {
   ChatDotRound,
   Collection,
   Document,
+  Expand,
   Files,
+  Fold,
   MagicStick,
   Odometer,
   PriceTag,
@@ -78,11 +80,22 @@ const menuGroups: MenuGroup[] = [
   },
 ]
 
+const COLLAPSE_STORAGE_KEY = 'fastener-ai:sidebar-collapsed'
+
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
 const menuRef = ref<MenuInstance>()
+const collapsed = ref(localStorage.getItem(COLLAPSE_STORAGE_KEY) === '1')
+
+watch(collapsed, (value) => {
+  localStorage.setItem(COLLAPSE_STORAGE_KEY, value ? '1' : '0')
+})
+
+function toggleCollapsed(): void {
+  collapsed.value = !collapsed.value
+}
 
 const visibleTopItems = computed(() =>
   topItems.filter((item) => !item.permission || auth.hasPermission(item.permission)),
@@ -117,12 +130,12 @@ const roleLabel = computed(() => {
 const initials = computed(() => displayName.value.trim().charAt(0).toUpperCase() || 'U')
 
 function ensureActiveGroupOpen(): void {
-  if (activeGroupKey.value) {
+  if (!collapsed.value && activeGroupKey.value) {
     menuRef.value?.open(activeGroupKey.value)
   }
 }
 
-watch(activeGroupKey, ensureActiveGroupOpen)
+watch([activeGroupKey, collapsed], ensureActiveGroupOpen)
 onMounted(ensureActiveGroupOpen)
 
 async function handleCommand(command: string): Promise<void> {
@@ -137,10 +150,10 @@ async function handleCommand(command: string): Promise<void> {
 
 <template>
   <el-container class="app-shell">
-    <el-aside class="sidebar" width="248px">
+    <el-aside class="sidebar" :class="{ collapsed }" :width="collapsed ? '64px' : '248px'">
       <div class="brand">
         <span class="brand-mark">F</span>
-        <div>
+        <div class="brand-text">
           <strong>Fastener AI</strong>
           <small>外销助手</small>
         </div>
@@ -152,6 +165,8 @@ async function handleCommand(command: string): Promise<void> {
         router
         class="nav-menu"
         unique-opened
+        :collapse="collapsed"
+        :collapse-transition="true"
       >
         <el-menu-item
           v-for="item in visibleTopItems"
@@ -159,7 +174,7 @@ async function handleCommand(command: string): Promise<void> {
           :index="item.path"
         >
           <el-icon><component :is="item.icon" /></el-icon>
-          <span>{{ item.label }}</span>
+          <template #title>{{ item.label }}</template>
         </el-menu-item>
 
         <el-sub-menu
@@ -177,20 +192,37 @@ async function handleCommand(command: string): Promise<void> {
             :index="item.path"
           >
             <el-icon><component :is="item.icon" /></el-icon>
-            <span>{{ item.label }}</span>
+            <template #title>{{ item.label }}</template>
           </el-menu-item>
         </el-sub-menu>
       </el-menu>
 
       <div class="sidebar-footer">
         <span class="version-pill">v0.9</span>
-        <span>MVP 试点版</span>
+        <span v-if="!collapsed">MVP 试点版</span>
       </div>
     </el-aside>
 
     <el-container>
       <el-header class="topbar" height="68px">
-        <div class="topbar-title">
+        <div class="topbar-left">
+          <el-tooltip
+            :content="collapsed ? '展开菜单' : '收起菜单'"
+            placement="bottom"
+            :show-after="300"
+          >
+            <button
+              class="collapse-button"
+              type="button"
+              :aria-label="collapsed ? '展开侧边菜单' : '收起侧边菜单'"
+              @click="toggleCollapsed"
+            >
+              <el-icon :size="18">
+                <Expand v-if="collapsed" />
+                <Fold v-else />
+              </el-icon>
+            </button>
+          </el-tooltip>
           <h1>{{ pageTitle }}</h1>
         </div>
 
@@ -231,6 +263,7 @@ async function handleCommand(command: string): Promise<void> {
   flex-direction: column;
   background: linear-gradient(180deg, #10233f 0%, #0b1730 100%);
   color: #dbe5f5;
+  transition: width 0.22s ease;
 }
 
 .brand {
@@ -239,6 +272,17 @@ async function handleCommand(command: string): Promise<void> {
   gap: 12px;
   padding: 22px 20px 18px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sidebar.collapsed .brand {
+  justify-content: center;
+  padding: 20px 0 16px;
+}
+
+.sidebar.collapsed .brand-text {
+  display: none;
 }
 
 .brand-mark {
@@ -254,14 +298,14 @@ async function handleCommand(command: string): Promise<void> {
   font-weight: 800;
 }
 
-.brand strong {
+.brand-text strong {
   display: block;
   color: #fff;
   font-size: 16px;
   letter-spacing: 0.02em;
 }
 
-.brand small {
+.brand-text small {
   color: #8fa6c9;
   font-size: 12px;
 }
@@ -276,6 +320,15 @@ async function handleCommand(command: string): Promise<void> {
   padding: 10px 12px;
   border-right: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.sidebar.collapsed .nav-menu {
+  padding: 10px 8px;
+}
+
+.nav-menu:not(.el-menu--collapse) {
+  width: 100%;
 }
 
 .nav-menu .el-menu-item,
@@ -286,6 +339,15 @@ async function handleCommand(command: string): Promise<void> {
   font-size: 13.5px;
   line-height: 44px;
   transition: background 0.18s ease, color 0.18s ease;
+}
+
+.sidebar.collapsed .nav-menu .el-menu-item,
+.sidebar.collapsed .nav-menu :deep(.el-sub-menu__title) {
+  width: 48px;
+  min-width: 48px;
+  margin: 3px auto;
+  padding: 0 !important;
+  justify-content: center;
 }
 
 .nav-menu .el-menu-item:hover,
@@ -312,6 +374,11 @@ async function handleCommand(command: string): Promise<void> {
   background: #60a5fa;
 }
 
+.sidebar.collapsed .nav-menu .el-menu-item.is-active::before {
+  top: 15%;
+  bottom: 15%;
+}
+
 .nav-menu :deep(.el-sub-menu.is-opened > .el-sub-menu__title) {
   color: #dce9ff;
   font-weight: 600;
@@ -325,11 +392,13 @@ async function handleCommand(command: string): Promise<void> {
 .sidebar-footer {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 16px 20px;
+  padding: 16px 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.07);
   color: #7c8fb0;
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .version-pill {
@@ -354,11 +423,41 @@ async function handleCommand(command: string): Promise<void> {
   backdrop-filter: blur(8px);
 }
 
-.topbar-title h1 {
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.collapse-button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #5a6a86;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+}
+
+.collapse-button:hover {
+  border-color: #dbe3f0;
+  background: #f2f6fd;
+  color: #2563eb;
+}
+
+.topbar-left h1 {
   margin: 0;
+  overflow: hidden;
   color: #14213d;
   font-size: 18px;
   letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .topbar-right {
