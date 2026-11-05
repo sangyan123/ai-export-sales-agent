@@ -280,7 +280,6 @@ async function submit(): Promise<void> {
     v-model="visible"
     title="新建报价"
     width="880px"
-    :close-on-click-modal="false"
     destroy-on-close
   >
     <el-form :model="form" label-width="100px">

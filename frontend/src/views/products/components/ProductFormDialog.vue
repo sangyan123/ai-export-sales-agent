@@ -206,7 +206,6 @@ async function submit(): Promise<void> {
     v-model="visible"
     :title="isEdit ? '编辑产品' : '新建产品'"
     width="760px"
-    :close-on-click-modal="false"
   >
     <el-form ref="formRef" :model="form" :rules="rules" label-width="96px">
       <div class="form-grid">

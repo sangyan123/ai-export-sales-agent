@@ -246,7 +246,6 @@ onMounted(load)
       v-model="dialogVisible"
       title="新增专属价"
       width="560px"
-      :close-on-click-modal="false"
     >
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
         <el-form-item label="产品" prop="product_id">

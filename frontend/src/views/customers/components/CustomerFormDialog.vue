@@ -108,7 +108,6 @@ async function submit(): Promise<void> {
     v-model="visible"
     :title="isEdit ? '编辑客户' : '新建客户'"
     width="540px"
-    :close-on-click-modal="false"
   >
     <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
       <el-form-item label="公司名称" prop="company_name">

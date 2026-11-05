@@ -129,7 +129,6 @@ async function submit(): Promise<void> {
     v-model="visible"
     :title="isEdit ? '编辑价格表' : '新建价格表'"
     width="540px"
-    :close-on-click-modal="false"
   >
     <el-form ref="formRef" :model="form" :rules="rules" label-width="96px">
       <el-form-item label="名称" prop="name">

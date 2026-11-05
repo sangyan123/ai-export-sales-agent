@@ -159,7 +159,6 @@ onMounted(load)
       v-model="dialogVisible"
       :title="editing ? '编辑联系人' : '添加联系人'"
       width="520px"
-      :close-on-click-modal="false"
     >
       <el-form ref="formRef" :model="form" :rules="rules" label-width="80px">
         <el-form-item label="姓名" prop="name">
